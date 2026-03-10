@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "REPLACE_TEAM_ID.com.example.owanyApp",
+        "paths": [
+          "/patrimonio/*"
+        ]
+      }
+    ]
+  }
+}
