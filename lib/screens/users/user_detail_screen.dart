@@ -23,8 +23,7 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
   final _apiService = ApiService();
   late Future<Usuario> _usuarioFuture;
   Apartamento? _apartamentoModador;
-  bool _isDeleting = false;
-  bool _isResettingPassword = false;
+  bool _isTogglingActive = false;
 
   String _tx(String pt, String en) {
     final code = Localizations.localeOf(context).languageCode.toLowerCase();
@@ -106,22 +105,23 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
     }
   }
 
-  /// Mostra diálogo de confirmação antes de excluir o usuário
-  Future<void> _confirmarExclusao(BuildContext context, Usuario usuario) async {
-    final confirmar = await showDialog<bool>(
+
+  Future<void> _toggleAtivo(BuildContext context, Usuario usuario) async {
+    final l10n = AppLocalizations.of(context)!;
+    final desejaDesativar = usuario.ativo;
+    final confirma = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: OwanyTheme.cardColor(ctx),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
-          _tx('Excluir Usuário', 'Delete User'),
-          style: TextStyle(
-            color: OwanyTheme.textPrimary(ctx),
-            fontWeight: FontWeight.w700,
-          ),
+          desejaDesativar ? l10n.users_deactivate : l10n.common_activate,
+          style: TextStyle(color: OwanyTheme.textPrimary(ctx), fontWeight: FontWeight.w700),
         ),
         content: Text(
-          '${_tx('Tem certeza que deseja excluir o usuário', 'Are you sure you want to delete user')} "${usuario.nome}"? ${_tx('Esta ação não pode ser desfeita.', 'This action cannot be undone.')}',
+          desejaDesativar
+              ? l10n.users_deactivate_description(usuario.nome)
+              : _tx('Deseja ativar este usuário?', 'Do you want to activate this user?'),
           style: TextStyle(color: OwanyTheme.textMutedColor(ctx)),
         ),
         actions: [
@@ -132,212 +132,61 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: OwanyTheme.destructiveButtonStyle(),
-            child: Text(_tx('Excluir', 'Delete')),
+            style: desejaDesativar
+                ? OwanyTheme.destructiveButtonStyle()
+                : OwanyTheme.primaryButtonStyle(),
+            child: Text(desejaDesativar ? l10n.users_deactivate_button : l10n.common_activate),
           ),
         ],
       ),
     );
 
-    if (confirmar == true && mounted) {
-      await _excluirUsuario(context, usuario.id);
-    }
-  }
+    if (confirma != true || !mounted) return;
 
-  Future<void> _excluirUsuario(BuildContext context, String usuarioId) async {
-    setState(() => _isDeleting = true);
+    setState(() => _isTogglingActive = true);
     try {
-      await _apiService.deletarUsuario(usuarioId);
+      if (desejaDesativar) {
+        await _apiService.desativarUsuario(usuario.id);
+      } else {
+        await _apiService.atualizarUsuario(
+          usuario.id,
+          nome: usuario.nome,
+          telefone: usuario.telefone,
+          ativo: true,
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        OwanyTheme.snackBar('Usuário excluído com sucesso.',
-            type: SnackBarType.success),
-      );
-      Navigator.pop(context, true); // Retorna true para refresh na lista
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        OwanyTheme.snackBar('Erro ao excluir: $e', type: SnackBarType.error),
-      );
-    } finally {
-      if (mounted) setState(() => _isDeleting = false);
-    }
-  }
-
-  /// Mostra diálogo para admin redefinir senha de outro usuário
-  Future<void> _mostrarDialogoResetSenha(BuildContext context, Usuario usuario) async {
-    final l10n = AppLocalizations.of(context)!;
-    final authProvider = context.read<AuthProvider>();
-    
-    // Impedir que admin resete a própria senha por este fluxo
-    if (authProvider.usuarioAtual?.id == usuario.id) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        OwanyTheme.snackBar(l10n.users_reset_admin_cannot_self, type: SnackBarType.warning),
-      );
-      return;
-    }
-
-    final senhaController = TextEditingController();
-    final confirmarController = TextEditingController();
-    bool enviarSms = true;
-    final formKey = GlobalKey<FormState>();
-
-    final resultado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: OwanyTheme.cardColor(ctx),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(Icons.lock_reset_rounded, color: OwanyTheme.primaryOrange),
-              SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  l10n.users_reset_admin_title,
-                  style: TextStyle(
-                    color: OwanyTheme.textPrimary(ctx),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          content: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  l10n.users_reset_admin_description,
-                  style: TextStyle(color: OwanyTheme.textMutedColor(ctx), fontSize: 13),
-                ),
-                SizedBox(height: 8),
-                Container(
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: OwanyTheme.info.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: OwanyTheme.info.withValues(alpha: 0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.person_rounded, size: 16, color: OwanyTheme.info),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          usuario.nome,
-                          style: TextStyle(fontWeight: FontWeight.w600, color: OwanyTheme.textPrimary(ctx)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: 16),
-                TextFormField(
-                  controller: senhaController,
-                  obscureText: true,
-                  style: TextStyle(color: OwanyTheme.textPrimary(ctx)),
-                  decoration: OwanyTheme.inputDecoration(
-                    context: ctx,
-                    label: l10n.users_reset_admin_new_password,
-                    hint: l10n.users_reset_admin_password_min,
-                    icon: Icons.lock_rounded,
-                  ),
-                  validator: (v) {
-                    if (v == null || v.length < 6) return l10n.users_reset_admin_password_min;
-                    return null;
-                  },
-                ),
-                SizedBox(height: 12),
-                TextFormField(
-                  controller: confirmarController,
-                  obscureText: true,
-                  style: TextStyle(color: OwanyTheme.textPrimary(ctx)),
-                  decoration: OwanyTheme.inputDecoration(
-                    context: ctx,
-                    label: l10n.users_reset_admin_confirm_password,
-                    icon: Icons.lock_outline_rounded,
-                  ),
-                  validator: (v) {
-                    if (v != senhaController.text) return l10n.users_reset_admin_password_mismatch;
-                    return null;
-                  },
-                ),
-                SizedBox(height: 12),
-                CheckboxListTile(
-                  value: enviarSms,
-                  onChanged: (v) => setDialogState(() => enviarSms = v ?? true),
-                  title: Text(
-                    l10n.users_reset_admin_send_sms,
-                    style: TextStyle(fontSize: 14, color: OwanyTheme.textPrimary(ctx)),
-                  ),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  activeColor: OwanyTheme.primaryOrange,
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(_tx('Cancelar', 'Cancel'), style: TextStyle(color: OwanyTheme.textMutedColor(ctx))),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {
-                if (formKey.currentState!.validate()) {
-                  Navigator.pop(ctx, true);
-                }
-              },
-              icon: Icon(Icons.check_rounded, size: 18),
-              label: Text(_tx('Confirmar', 'Confirm')),
-              style: OwanyTheme.primaryButtonStyle(),
-            ),
-          ],
+        OwanyTheme.snackBar(
+          desejaDesativar
+              ? AppLocalizations.of(context)!.users_deactivated_success
+              : _tx('Usuário ativado com sucesso.', 'User activated successfully.'),
+          type: SnackBarType.success,
         ),
-      ),
-    );
-
-    if (resultado == true && mounted) {
-      await _executarResetSenha(
-        context,
-        usuario.id,
-        senhaController.text,
-        enviarSms,
       );
-    }
-  }
-
-  Future<void> _executarResetSenha(
-    BuildContext context,
-    String usuarioId,
-    String novaSenha,
-    bool enviarSms,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _isResettingPassword = true);
-    
-    try {
-      await _apiService.resetSenhaAdmin(
-        usuarioId,
-        novaSenha: novaSenha,
-        enviarSms: enviarSms,
-      );
-      
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        OwanyTheme.snackBar(l10n.users_reset_admin_success, type: SnackBarType.success),
-      );
+      setState(() {
+        _usuarioFuture = _apiService
+            .getUsuario(widget.usuarioId)
+            .then(
+              (dto) => Usuario(
+                id: dto.id,
+                nome: dto.nome,
+                nomeLogin: dto.nomeLogin,
+                telefone: dto.telefone,
+                tipo: _parseUsuarioTipo(dto.role),
+                ativo: dto.ativo,
+                criadoEm: tryParseBackendDateTimeToLocal(dto.criadoEm) ?? DateTime.now(),
+              ),
+            );
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        OwanyTheme.snackBar('${l10n.users_reset_admin_error}: $e', type: SnackBarType.error),
+        OwanyTheme.snackBar('${AppLocalizations.of(context)!.common_error}: $e',
+            type: SnackBarType.error),
       );
     } finally {
-      if (mounted) setState(() => _isResettingPassword = false);
+      if (mounted) setState(() => _isTogglingActive = false);
     }
   }
 
@@ -708,50 +557,72 @@ class _UserDetailScreenState extends State<UserDetailScreen> {
                     ),
                   ),
                   SizedBox(height: 12),
-                  // Botão de Reset de Senha (Admin)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: (_isResettingPassword || _isDeleting)
-                          ? null
-                          : () => _mostrarDialogoResetSenha(context, usuario),
-                      icon: _isResettingPassword
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: OwanyTheme.white,
-                              ),
-                            )
-                          : Icon(Icons.lock_reset_rounded, size: 18),
-                      label: Text(_isResettingPassword
-                          ? _tx('Redefinindo...', 'Resetting...')
-                          : AppLocalizations.of(context)!.users_reset_admin_title),
-                      style: OwanyTheme.primaryButtonStyle(),
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  // Botão de Excluir
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: (_isDeleting || _isResettingPassword)
-                          ? null
-                          : () => _confirmarExclusao(context, usuario),
-                      icon: _isDeleting
-                          ? SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: OwanyTheme.cardColor(context),
-                              ),
-                            )
-                          : Icon(Icons.delete_forever_rounded, size: 18),
-                      label: Text(_isDeleting ? 'Excluindo...' : 'Excluir Usuário'),
-                      style: OwanyTheme.destructiveButtonStyle(),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isTogglingActive
+                              ? null
+                              : () => Navigator.pushNamed(
+                                    context,
+                                    '/usuarios-editar',
+                                    arguments: usuario.id,
+                                  ).then((value) {
+                                    if (value == true && mounted) {
+                                      setState(() {
+                                        _usuarioFuture = _apiService
+                                            .getUsuario(widget.usuarioId)
+                                            .then(
+                                              (dto) => Usuario(
+                                                id: dto.id,
+                                                nome: dto.nome,
+                                                nomeLogin: dto.nomeLogin,
+                                                telefone: dto.telefone,
+                                                tipo: _parseUsuarioTipo(dto.role),
+                                                ativo: dto.ativo,
+                                                criadoEm: tryParseBackendDateTimeToLocal(dto.criadoEm) ?? DateTime.now(),
+                                              ),
+                                            );
+                                      });
+                                    }
+                                  }),
+                          icon: Icon(Icons.edit_rounded, size: 18),
+                          label: Text(_tx('Editar', 'Edit')),
+                          style: OwanyTheme.primaryButtonStyle(),
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isTogglingActive
+                              ? null
+                              : () => _toggleAtivo(context, usuario),
+                          icon: _isTogglingActive
+                              ? SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: OwanyTheme.white,
+                                  ),
+                                )
+                              : Icon(
+                                  usuario.ativo
+                                      ? Icons.block_rounded
+                                      : Icons.check_circle_rounded,
+                                  size: 18,
+                                ),
+                          label: Text(
+                            usuario.ativo
+                                ? AppLocalizations.of(context)!.users_deactivate_button
+                                : AppLocalizations.of(context)!.common_activate,
+                          ),
+                          style: usuario.ativo
+                              ? OwanyTheme.destructiveButtonStyle()
+                              : OwanyTheme.primaryButtonStyle(),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],

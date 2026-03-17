@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../generated_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/enums.dart';
 import '../../providers/apartamentos_provider.dart';
 import '../../theme/owany_theme.dart';
 import '../../widgets/primary_button.dart';
@@ -23,6 +24,51 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
   final _quartosController = TextEditingController();
   final _observacoesController = TextEditingController();
   String _estadoSelecionado = 'Disponivel';
+  String? _apartamentoId;
+  bool _isEditMode = false;
+  bool _didFetch = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didFetch) return;
+    _didFetch = true;
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args != null && args is String) {
+      _apartamentoId = args;
+      _isEditMode = true;
+      _carregarApartamento();
+    }
+  }
+
+  Future<void> _carregarApartamento() async {
+    final prov = context.read<ApartamentosProvider>();
+    await prov.carregarApartamento(_apartamentoId!);
+    final apto = prov.apartamentoAtual;
+    if (apto != null) {
+      _nomeController.text = apto.nome;
+      _numeroController.text = apto.numero;
+      _blocoController.text = apto.bloco;
+      _andarController.text = apto.andar.toString();
+      _quartosController.text = apto.quartos?.toString() ?? '';
+      _observacoesController.text = apto.observacoes ?? '';
+      _estadoSelecionado = _estadoToApiValue(apto.estado);
+      setState(() {});
+    }
+  }
+
+  String _estadoToApiValue(EstadoApartamento estado) {
+    switch (estado) {
+      case EstadoApartamento.Disponivel:
+        return 'Disponivel';
+      case EstadoApartamento.Ocupado:
+        return 'Ocupado';
+      case EstadoApartamento.EmManutencao:
+        return 'EmManutencao';
+      case EstadoApartamento.Inativo:
+        return 'Inativo';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +77,9 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
     return Scaffold(
       backgroundColor: OwanyTheme.backgroundColor(context),
       appBar: StandardGlassAppBar(
-        title: AppLocalizations.of(context)!.apartments_create_title,
+        title: _isEditMode
+            ? AppLocalizations.of(context)!.apartments_edit
+            : AppLocalizations.of(context)!.apartments_create_title,
         icon: Icons.apartment_rounded,
         showBackButton: true,
       ),
@@ -42,7 +90,10 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
             final horizontalPadding = isWide ? 32.0 : 20.0;
 
             return SingleChildScrollView(
-              padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: 20),
+              padding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding,
+                vertical: 20,
+              ),
               child: Form(
                 key: _formKey,
                 autovalidateMode: AutovalidateMode.onUserInteraction,
@@ -51,16 +102,21 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
                   children: [
                     _HeroCard(isWide: isWide),
                     SizedBox(height: 18),
-
                     Container(
                       padding: EdgeInsets.all(isWide ? 22 : 16),
                       decoration: BoxDecoration(
                         color: OwanyTheme.cardColor(context),
                         borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: OwanyTheme.borderColor(context).withValues(alpha: 0.6)),
+                        border: Border.all(
+                          color: OwanyTheme.borderColor(context).withValues(
+                            alpha: 0.6,
+                          ),
+                        ),
                         boxShadow: [
                           BoxShadow(
-                            color: OwanyTheme.textPrimary(context).withValues(alpha: 0.05),
+                            color: OwanyTheme.textPrimary(context).withValues(
+                              alpha: 0.05,
+                            ),
                             blurRadius: 18,
                             offset: const Offset(0, 10),
                           ),
@@ -71,15 +127,18 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
                         children: [
                           Text(
                             AppLocalizations.of(context)!.apartments_details,
-                            style: OwanyTheme.headlineSmall.copyWith(color: OwanyTheme.textPrimary(context)),
+                            style: OwanyTheme.headlineSmall.copyWith(
+                              color: OwanyTheme.textPrimary(context),
+                            ),
                           ),
                           SizedBox(height: 10),
                           Text(
                             AppLocalizations.of(context)!.apartments_fill_fields,
-                            style: OwanyTheme.bodySmall.copyWith(color: OwanyTheme.textMutedColor(context)),
+                            style: OwanyTheme.bodySmall.copyWith(
+                              color: OwanyTheme.textMutedColor(context),
+                            ),
                           ),
                           SizedBox(height: 18),
-
                           Wrap(
                             spacing: 16,
                             runSpacing: 16,
@@ -155,8 +214,12 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
                                   ),
                                   validator: (v) {
                                     final value = int.tryParse(v ?? '');
-                                    if (value == null) return AppLocalizations.of(context)!.apartments_valid_number;
-                                    if (value < 0) return AppLocalizations.of(context)!.apartments_not_negative;
+                                    if (value == null) {
+                                      return AppLocalizations.of(context)!.apartments_valid_number;
+                                    }
+                                    if (value < 0) {
+                                      return AppLocalizations.of(context)!.apartments_not_negative;
+                                    }
                                     return null;
                                   },
                                 ),
@@ -172,22 +235,32 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
                                   items: [
                                     DropdownMenuItem(
                                       value: 'Disponivel',
-                                      child: Text(AppLocalizations.of(context)!.apartments_list_available),
+                                      child: Text(
+                                        AppLocalizations.of(context)!.apartments_list_available,
+                                      ),
                                     ),
                                     DropdownMenuItem(
                                       value: 'Ocupado',
-                                      child: Text(AppLocalizations.of(context)!.apartments_list_occupied),
+                                      child: Text(
+                                        AppLocalizations.of(context)!.apartments_list_occupied,
+                                      ),
                                     ),
                                     DropdownMenuItem(
                                       value: 'EmManutencao',
-                                      child: Text(AppLocalizations.of(context)!.apartments_list_maintenance),
+                                      child: Text(
+                                        AppLocalizations.of(context)!.apartments_list_maintenance,
+                                      ),
                                     ),
                                     DropdownMenuItem(
                                       value: 'Inativo',
-                                      child: Text(AppLocalizations.of(context)!.apartments_inactive),
+                                      child: Text(
+                                        AppLocalizations.of(context)!.apartments_inactive,
+                                      ),
                                     ),
                                   ],
-                                  onChanged: (v) => setState(() => _estadoSelecionado = v ?? 'Disponivel'),
+                                  onChanged: (v) => setState(
+                                    () => _estadoSelecionado = v ?? 'Disponivel',
+                                  ),
                                 ),
                               ),
                               _FieldCard(
@@ -206,8 +279,9 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
                                   ),
                                   validator: (v) {
                                     final value = int.tryParse(v ?? '');
-                                    if (value == null || value < 0)
+                                    if (value == null || value < 0) {
                                       return AppLocalizations.of(context)!.apartments_valid_number;
+                                    }
                                     return null;
                                   },
                                 ),
@@ -234,21 +308,23 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
                         ],
                       ),
                     ),
-
                     SizedBox(height: 24),
-
                     Row(
                       children: [
                         Expanded(
                           child: PrimaryButton.secondary(
                             text: AppLocalizations.of(context)!.common_cancel,
-                            onPressed: prov.isLoading ? null : () => Navigator.pop(context),
+                            onPressed: prov.isLoading
+                                ? null
+                                : () => Navigator.pop(context),
                           ),
                         ),
                         SizedBox(width: 12),
                         Expanded(
                           child: PrimaryButton.primary(
-                            text: AppLocalizations.of(context)!.apartments_create_button,
+                            text: _isEditMode
+                                ? AppLocalizations.of(context)!.common_save
+                                : AppLocalizations.of(context)!.apartments_create_button,
                             onPressed: prov.isLoading ? null : _criarApartamento,
                             isLoading: prov.isLoading,
                             icon: Icons.check_circle_rounded,
@@ -281,32 +357,63 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final prov = context.read<ApartamentosProvider>();
-    final sucesso = await prov.criarApartamento(
-      nome: _nomeController.text.trim(),
-      numero: _numeroController.text.trim(),
-      bloco: _blocoController.text.trim(),
-      andar: int.tryParse(_andarController.text.trim()) ?? 0,
-      estado: _estadoSelecionado,
-      quartos: int.tryParse(_quartosController.text.trim()) ?? 0,
-      banheiros: 0,
-      areaMetrosQuadrados: null,
-      descricao: null,
-      observacoes: _observacoesController.text.trim().isEmpty ? null : _observacoesController.text.trim(),
-    );
+    bool sucesso = false;
+    if (_isEditMode && _apartamentoId != null) {
+      sucesso = await prov.atualizarApartamento(
+        _apartamentoId!,
+        nome: _nomeController.text.trim(),
+        numero: _numeroController.text.trim(),
+        bloco: _blocoController.text.trim(),
+        andar: int.tryParse(_andarController.text.trim()) ?? 0,
+        estado: _estadoSelecionado,
+        quartos: int.tryParse(_quartosController.text.trim()) ?? 0,
+        banheiros: 0,
+        areaMetrosQuadrados: null,
+        descricao: null,
+        observacoes: _observacoesController.text.trim().isEmpty
+            ? null
+            : _observacoesController.text.trim(),
+      );
+    } else {
+      sucesso = await prov.criarApartamento(
+        nome: _nomeController.text.trim(),
+        numero: _numeroController.text.trim(),
+        bloco: _blocoController.text.trim(),
+        andar: int.tryParse(_andarController.text.trim()) ?? 0,
+        estado: _estadoSelecionado,
+        quartos: int.tryParse(_quartosController.text.trim()) ?? 0,
+        banheiros: 0,
+        areaMetrosQuadrados: null,
+        descricao: null,
+        observacoes: _observacoesController.text.trim().isEmpty
+            ? null
+            : _observacoesController.text.trim(),
+      );
+    }
 
     if (!mounted) return;
 
     if (sucesso) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(OwanyTheme.snackBar(AppLocalizations.of(context)!.apartments_created_success));
+      ScaffoldMessenger.of(context).showSnackBar(
+        OwanyTheme.snackBar(
+          AppLocalizations.of(context)!.apartments_created_success,
+        ),
+      );
       Navigator.pop(context);
     } else if (prov.errorMessage != null) {
-      ScaffoldMessenger.of(context).showSnackBar(OwanyTheme.snackBar(prov.errorMessage!, type: SnackBarType.error));
+      ScaffoldMessenger.of(context).showSnackBar(
+        OwanyTheme.snackBar(
+          prov.errorMessage!,
+          type: SnackBarType.error,
+        ),
+      );
     }
   }
 
-  InputDecoration _buildInputDecoration({required IconData icon, required String hint}) {
+  InputDecoration _buildInputDecoration({
+    required IconData icon,
+    required String hint,
+  }) {
     return InputDecoration(
       hintText: hint,
       prefixIcon: Icon(icon, color: OwanyTheme.primaryOrange),
@@ -314,11 +421,15 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
       fillColor: OwanyTheme.cardColor(context),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: OwanyTheme.borderColor(context).withValues(alpha: 0.3)),
+        borderSide: BorderSide(
+          color: OwanyTheme.borderColor(context).withValues(alpha: 0.3),
+        ),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: OwanyTheme.borderColor(context).withValues(alpha: 0.3)),
+        borderSide: BorderSide(
+          color: OwanyTheme.borderColor(context).withValues(alpha: 0.3),
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -333,7 +444,9 @@ class _CreateApartmentScreenState extends State<CreateApartmentScreen> {
         borderSide: const BorderSide(color: OwanyTheme.error, width: 2),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      hintStyle: TextStyle(color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.7)),
+      hintStyle: TextStyle(
+        color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.7),
+      ),
     );
   }
 }
@@ -371,7 +484,11 @@ class _HeroCard extends StatelessWidget {
               color: OwanyTheme.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(Icons.add_business_rounded, color: OwanyTheme.cardColor(context), size: 24),
+            child: Icon(
+              Icons.add_business_rounded,
+              color: OwanyTheme.cardColor(context),
+              size: 24,
+            ),
           ),
           SizedBox(width: 14),
           Expanded(
@@ -380,12 +497,16 @@ class _HeroCard extends StatelessWidget {
               children: [
                 Text(
                   AppLocalizations.of(context)!.apartments_premium_register,
-                  style: OwanyTheme.labelLarge.copyWith(color: OwanyTheme.cardColor(context)),
+                  style: OwanyTheme.labelLarge.copyWith(
+                    color: OwanyTheme.cardColor(context),
+                  ),
                 ),
                 SizedBox(height: 4),
                 Text(
                   AppLocalizations.of(context)!.apartments_organize_blocks,
-                  style: OwanyTheme.bodySmall.copyWith(color: OwanyTheme.white.withValues(alpha: 0.88)),
+                  style: OwanyTheme.bodySmall.copyWith(
+                    color: OwanyTheme.white.withValues(alpha: 0.88),
+                  ),
                 ),
               ],
             ),
@@ -401,18 +522,29 @@ class _FieldCard extends StatelessWidget {
   final Widget child;
   final bool fullWidth;
 
-  const _FieldCard({required this.label, required this.child, this.fullWidth = false});
+  const _FieldCard({
+    required this.label,
+    required this.child,
+    this.fullWidth = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: BoxConstraints(minWidth: fullWidth ? 0 : 260, maxWidth: fullWidth ? double.infinity : 420),
+      constraints: BoxConstraints(
+        minWidth: fullWidth ? 0 : 260,
+        maxWidth: fullWidth ? double.infinity : 420,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: OwanyTheme.textPrimary(context)),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: OwanyTheme.textPrimary(context),
+            ),
           ),
           SizedBox(height: 8),
           child,

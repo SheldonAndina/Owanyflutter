@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:ui' as ui;
-// import 'dart:io'; // removido para web
 import 'package:flutter/foundation.dart';
 import '../utils/app_logger.dart';
 import 'package:http/http.dart' as http;
@@ -20,6 +19,8 @@ import '../dto/ativos_dtos.dart';
 import '../dto/blocos_dtos.dart';
 import '../dto/item_busca_dto.dart';
 import '../utils/app_date_time.dart';
+import '../utils/http_client_factory.dart'
+    if (dart.library.io) '../utils/http_client_factory_io.dart';
 
 class QrCodesLoteResult {
   final Map<String, List<int>> arquivosPng;
@@ -92,24 +93,15 @@ class ApiService {
   }
 
   static String _getBaseUrl() {
-    // Platform-specific URL resolution for development
-    // Windows Desktop / MacOS / Linux: localhost:7068
-    // Android Emulator: 10.0.2.2:7068 (special alias for host machine)
-    // Physical Android Device: YOUR_PC_IP:7068
-    // Web: YOUR_API_URL
-
-    if (kIsWeb) {
-      // Web platform
-      return 'https://localhost:7068/api';
-    }
-    // For all other platforms, fallback to localhost
-    return 'https://localhost:7068/api';
+    // Force using specific development server address provided by the user.
+    // This makes the app point to the machine at 192.168.43.241:7068 regardless
+    // of platform (useful when testing on a physical device on the same LAN).
+    return 'https://192.168.43.241:7068/api';
   }
 
   /// Create HTTP client that accepts self-signed certificates (dev only)
   static http.Client _createHttpClient() {
-    // Web does not support custom HttpClient, so return default client
-    return http.Client();
+    return createHttpClient();
   }
 
   late final http.Client _httpClient = _createHttpClient();
@@ -120,6 +112,9 @@ class ApiService {
 
   String? _refreshToken;
   bool _isReauthenticating = false;
+  DateTime? _lastProactiveRefresh;
+  static const Duration _tokenRefreshSkew = Duration(seconds: 60);
+  static const Duration _proactiveRefreshCooldown = Duration(seconds: 30);
 
   String? get token => _token;
 
@@ -218,6 +213,72 @@ class ApiService {
     }
   }
 
+  Future<void> _maybeRefreshToken() async {
+    if (_isReauthenticating) return;
+
+    if (_token == null || _token!.isEmpty) {
+      await loadToken();
+    }
+
+    if (_token == null || _token!.isEmpty) {
+      if (_refreshToken == null || _refreshToken!.isEmpty) {
+        AppLogger.debug('ApiService', 'Proactive refresh skipped: no tokens');
+      }
+      return;
+    }
+
+    final now = DateTime.now();
+    if (_lastProactiveRefresh != null &&
+        now.difference(_lastProactiveRefresh!) < _proactiveRefreshCooldown) {
+      return;
+    }
+
+    DateTime expiresAt;
+    try {
+      expiresAt = _getJwtExpiration(_token!);
+    } catch (e) {
+      AppLogger.warning('ApiService', 'JWT invalido ao decodificar exp: $e');
+      return;
+    }
+
+    if (expiresAt.isAfter(now.add(_tokenRefreshSkew))) {
+      return;
+    }
+
+    _lastProactiveRefresh = now;
+
+    if (_refreshToken == null || _refreshToken!.isEmpty) {
+      AppLogger.debug('ApiService', 'Refresh token ausente para renovacao');
+      return;
+    }
+
+    final renewed = await _tryReauthenticate();
+    if (!renewed) {
+      AppLogger.warning('ApiService', 'Renovacao proativa falhou');
+    }
+  }
+
+  DateTime _getJwtExpiration(String token) {
+    final parts = token.split('.');
+    if (parts.length != 3) {
+      throw Exception('JWT malformado');
+    }
+    final payload = parts[1];
+    final normalized = base64Url.normalize(payload);
+    final bytes = base64Url.decode(normalized);
+    final jsonMap = jsonDecode(utf8.decode(bytes));
+    if (jsonMap is! Map<String, dynamic>) {
+      throw Exception('JWT payload invalido');
+    }
+    final exp = jsonMap['exp'];
+    if (exp is! num) {
+      throw Exception('JWT sem exp');
+    }
+    final seconds = exp.toInt();
+    return DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true)
+        .toLocal();
+  }
+
   /// POST /api/auth/refresh-token
   /// Renova JWT usando refresh token (sem reenviar credenciais)
   Future<LoginResponse> _refreshTokenRequest() async {
@@ -225,6 +286,7 @@ class ApiService {
       'auth/refresh-token',
       method: 'POST',
       retryOnUnauthorized: false,
+      proactiveRefresh: false,
       body: {'refreshToken': _refreshToken},
       fromJson: (json) {
         final response = LoginResponse.fromJson(json);
@@ -264,6 +326,7 @@ class ApiService {
     Object? body,
     Map<String, String>? queryParams,
     bool retryOnUnauthorized = true,
+    bool proactiveRefresh = true,
     required T Function(dynamic json) fromJson,
   }) async {
     try {
@@ -304,6 +367,10 @@ class ApiService {
           default:
             return _httpClient.get(url, headers: headers).timeout(_timeout);
         }
+      }
+
+      if (proactiveRefresh) {
+        await _maybeRefreshToken();
       }
 
       http.Response response = await send();
@@ -375,9 +442,16 @@ class ApiService {
                 );
               }
 
-              errorMsg = decoded['mensagem'] ?? 'Erro ao processar requisição';
+              // Common message fields
+              errorMsg = (decoded['mensagem'] ??
+                      decoded['message'] ??
+                      decoded['detail'] ??
+                      decoded['title']) ??
+                  'Erro ao processar requisição';
+
               final erros = (decoded['erros'] as List<dynamic>?)
-                  ?.cast<String>();
+                  ?.map((e) => e.toString())
+                  .toList();
               if (erros != null && erros.isNotEmpty) {
                 errorMsg = erros.join('\n');
               }
@@ -396,9 +470,14 @@ class ApiService {
                   errorMsg = errorList.join('\n');
                 }
               }
+            } else if (decoded is String && decoded.trim().isNotEmpty) {
+              errorMsg = decoded.trim();
             }
           } catch (e) {
             // If body is not JSON, just use status code message
+            if (response.body.isNotEmpty) {
+              errorMsg = response.body;
+            }
             switch (response.statusCode) {
               case 400:
                 errorMsg = 'Requisição inválida';
@@ -523,6 +602,18 @@ class ApiService {
         'novaSenha': novaSenha,
         'confirmarNovaSenha': novaSenha,
       },
+      fromJson: (_) {},
+    );
+  }
+
+  /// POST /api/device-tokens
+  /// Registra token FCM do dispositivo para push notifications
+  Future<void> registerDeviceToken(String token) async {
+    if (token.trim().isEmpty) return;
+    return request<void>(
+      'device-tokens',
+      method: 'POST',
+      body: {'token': token.trim()},
       fromJson: (_) {},
     );
   }
@@ -1526,11 +1617,24 @@ class ApiService {
   }
 
   /// GET /api/QrCodeBatch/download
-  Future<QrCodesLoteResult> gerarQrCodesLote({List<String>? itemIds}) async {
+  Future<QrCodesLoteResult> gerarQrCodesLote({
+    List<String>? itemIds,
+    String? estado,
+    String? formato,
+  }) async {
     final endpointName = 'QrCodeBatch/download'
         .replaceAll(RegExp(r'/+$'), '')
         .replaceAll(RegExp(r'^/+'), '');
     Uri url = Uri.parse('$baseUrl/$endpointName');
+    final query = <String, String>{
+      if (estado != null && estado.trim().isNotEmpty)
+        'estado': normalizeEstadoForApi(estado.trim()),
+      if (formato != null && formato.trim().isNotEmpty)
+        'formato': formato.trim(),
+    };
+    if (query.isNotEmpty) {
+      url = url.replace(queryParameters: query);
+    }
     http.Response response;
     response = await _httpClient
         .get(url, headers: _headers(isBinaryDownload: true))
@@ -1727,7 +1831,8 @@ class ApiService {
     try {
       return await request<QrCodeBatchRelatorioDto>(
         'qrcodebatch/relatorio',
-        queryParams: {'estado': ?estadoParam},
+        queryParams:
+            estadoParam == null ? null : <String, String>{'estado': estadoParam},
         fromJson: (json) {
           if (json is Map<String, dynamic>) {
             return QrCodeBatchRelatorioDto.fromJson(json);
@@ -1812,7 +1917,7 @@ class ApiService {
         .replaceAll(RegExp(r'^/+'), '');
     Uri url = Uri.parse('$baseUrl/$endpointName');
     final query = <String, String>{
-      'estado': ?estadoParam,
+      if (estadoParam != null) 'estado': estadoParam,
       if (formato.trim().isNotEmpty) 'formato': formato.trim(),
     };
     if (query.isNotEmpty) {
@@ -1829,7 +1934,10 @@ class ApiService {
     }
 
     if (response.statusCode == 404 || response.statusCode == 405) {
-      final fallback = await gerarQrCodesLote();
+      final fallback = await gerarQrCodesLote(
+        estado: estadoParam,
+        formato: formato,
+      );
       if (fallback.arquivoCompactado != null &&
           fallback.arquivoCompactado!.isNotEmpty) {
         return fallback.arquivoCompactado!;
@@ -1894,7 +2002,8 @@ class ApiService {
     try {
       return await request<String>(
         'qrcodebatch/html-impressao',
-        queryParams: {'estado': ?estadoParam},
+        queryParams:
+            estadoParam == null ? null : <String, String>{'estado': estadoParam},
         fromJson: (json) {
           if (json is String) return json;
           if (json is Map<String, dynamic>) {

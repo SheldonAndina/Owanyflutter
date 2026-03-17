@@ -29,7 +29,7 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
     _carregarDados();
   }
 
-  void _carregarDados() {
+  void _carregarDados({bool forceRefresh = false}) {
     AppLogger.info('Dashboard', 'Carregando dados...');
     Future.microtask(() async {
       final authProvider = context.read<AuthProvider>();
@@ -85,7 +85,11 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
           ]);
           if (!mounted) return;
           // Fase 2: todas as solicitações (atividade recente)
-          await solicitacoesProvider.loadSolicitacoes(apartamentoId: apartamentoId, refresh: true, carregarTodas: true);
+          await solicitacoesProvider.loadSolicitacoes(
+            apartamentoId: apartamentoId,
+            refresh: forceRefresh,
+            carregarTodas: true,
+          );
         } else {
           // Morador sem apartamento vinculado - não carrega nada
           AppLogger.warning('Dashboard', '⚠️ Morador sem apartamento vinculado');
@@ -107,7 +111,10 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
         ]);
         if (!mounted) return;
         // Fase 2: todas as solicitações para atividade recente
-        await solicitacoesProvider.loadSolicitacoes(refresh: true, carregarTodas: true);
+        await solicitacoesProvider.loadSolicitacoes(
+          refresh: forceRefresh,
+          carregarTodas: true,
+        );
       } else {
         // Outros roles - acesso mínimo
         AppLogger.warning('Dashboard', '⚠️ Role desconhecido ou sem permissão');
@@ -193,11 +200,12 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
           final canceladas = statusCountsPage['Cancelado'] ?? 0;
           final totalApartamentos = apartamentosProvider.apartamentos.length;
 
+          final isPortaria = authProvider.isPortaria;
           final podeComunicado = usuario.tipo == UsuarioTipo.Administrador || usuario.tipo == UsuarioTipo.Sindico;
 
           return RefreshIndicator(
             onRefresh: () async {
-              _carregarDados();
+              _carregarDados(forceRefresh: true);
               await Future.delayed(const Duration(milliseconds: 800));
             },
             color: OwanyTheme.primaryOrange,
@@ -248,13 +256,22 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
                           ),
                         ),
                       ),
-                    _buildMetrics(totalSolicitacoes, pendentes, totalApartamentos),
+                    _buildMetrics(
+                      totalSolicitacoes,
+                      pendentes,
+                      totalApartamentos,
+                      showSolicitacoes: !isPortaria,
+                      showApartamentos: true,
+                      disableApartamentosTap: isPortaria,
+                    ),
                     SizedBox(height: 32),
-                    _buildStatusSection(pendentes, emAnalise, emAndamento, rejeitadas, canceladas, concluidas),
-                    SizedBox(height: 32),
-                    if (solicitacoesProvider.solicitacoes.isNotEmpty) _buildAtividades(solicitacoesProvider),
-                    SizedBox(height: 32),
-                    _buildAcoesRapidas(context, podeComunicado),
+                    if (!isPortaria) ...[
+                      _buildStatusSection(pendentes, emAnalise, emAndamento, rejeitadas, canceladas, concluidas),
+                      SizedBox(height: 32),
+                      if (solicitacoesProvider.solicitacoes.isNotEmpty) _buildAtividades(solicitacoesProvider),
+                      SizedBox(height: 32),
+                      _buildAcoesRapidas(context, podeComunicado),
+                    ],
                   ],
                 ),
               ),
@@ -353,11 +370,25 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
     );
   }
 
-  Widget _buildMetrics(int totalSolicitacoes, int pendentes, int totalApartamentos) {
+  Widget _buildMetrics(
+    int totalSolicitacoes,
+    int pendentes,
+    int totalApartamentos, {
+    bool showSolicitacoes = true,
+    bool showApartamentos = true,
+    bool disableApartamentosTap = false,
+  }) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final bool isNarrow = constraints.maxWidth < 560;
-        final double itemWidth = isNarrow ? constraints.maxWidth : (constraints.maxWidth - 12) / 2;
+        final visibleCards = [
+          if (showSolicitacoes) true,
+          if (showApartamentos) true,
+        ];
+        final int cardCount = visibleCards.length;
+        final double itemWidth = isNarrow || cardCount <= 1
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 12) / 2;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -392,30 +423,34 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
               spacing: 12,
               runSpacing: 12,
               children: [
-                SizedBox(
-                  width: itemWidth,
-                  child: _buildMetricCard(
-                    icon: Icons.build_rounded,
-                    value: totalSolicitacoes.toString(),
-                    label: AppLocalizations.of(context)!.dashboard_maintenance,
-                    subtitle: pendentes > 0
-                        ? '$pendentes ${AppLocalizations.of(context)!.dashboard_open_count}'
-                        : AppLocalizations.of(context)!.dashboard_all_completed,
-                    color: OwanyTheme.primaryOrange,
-                    onTap: () => Navigator.pushNamed(context, '/solicitacoes'),
+                if (showSolicitacoes)
+                  SizedBox(
+                    width: itemWidth,
+                    child: _buildMetricCard(
+                      icon: Icons.build_rounded,
+                      value: totalSolicitacoes.toString(),
+                      label: AppLocalizations.of(context)!.dashboard_maintenance,
+                      subtitle: pendentes > 0
+                          ? '$pendentes ${AppLocalizations.of(context)!.dashboard_open_count}'
+                          : AppLocalizations.of(context)!.dashboard_all_completed,
+                      color: OwanyTheme.primaryOrange,
+                      onTap: () => Navigator.pushNamed(context, '/solicitacoes'),
+                    ),
                   ),
-                ),
-                SizedBox(
-                  width: itemWidth,
-                  child: _buildMetricCard(
-                    icon: Icons.apartment_rounded,
-                    value: totalApartamentos.toString(),
-                    label: AppLocalizations.of(context)!.apartments_list_title,
-                    subtitle: AppLocalizations.of(context)!.dashboard_total_condo,
-                    color: OwanyTheme.success,
-                    onTap: () => Navigator.pushNamed(context, '/apartamentos'),
+                if (showApartamentos)
+                  SizedBox(
+                    width: itemWidth,
+                    child: _buildMetricCard(
+                      icon: Icons.apartment_rounded,
+                      value: totalApartamentos.toString(),
+                      label: AppLocalizations.of(context)!.apartments_list_title,
+                      subtitle: AppLocalizations.of(context)!.dashboard_total_condo,
+                      color: OwanyTheme.success,
+                      onTap: disableApartamentosTap
+                          ? null
+                          : () => Navigator.pushNamed(context, '/apartamentos'),
+                    ),
                   ),
-                ),
               ],
             ),
           ],
@@ -578,45 +613,51 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
     required String label,
     required String subtitle,
     required Color color,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
   }) {
+    final card = Container(
+      padding: const EdgeInsets.all(16),
+      decoration: OwanyTheme.cardDecoration(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: color),
+          ),
+          SizedBox(height: 12),
+          Text(
+            value,
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: OwanyTheme.textPrimary(context)),
+          ),
+          SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: OwanyTheme.textMutedColor(context), fontWeight: FontWeight.w500),
+          ),
+          SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+
+    if (onTap == null) {
+      return Opacity(opacity: 0.75, child: card);
+    }
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: OwanyTheme.cardDecoration(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, size: 20, color: color),
-              ),
-              SizedBox(height: 12),
-              Text(
-                value,
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: OwanyTheme.textPrimary(context)),
-              ),
-              SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(fontSize: 12, color: OwanyTheme.textMutedColor(context), fontWeight: FontWeight.w500),
-              ),
-              SizedBox(height: 8),
-              Text(
-                subtitle,
-                style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-        ),
+        child: card,
       ),
     );
   }
@@ -727,7 +768,10 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
                       ),
                     ),
                     const SizedBox(height: 5),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -740,7 +784,6 @@ class _DashboardScreenModernoState extends State<DashboardScreenModerno> {
                             style: TextStyle(fontSize: 10, color: statusColor, fontWeight: FontWeight.w600),
                           ),
                         ),
-                        const SizedBox(width: 8),
                         Text(
                           timestamp,
                           style: TextStyle(fontSize: 11, color: OwanyTheme.textMutedColor(context)),

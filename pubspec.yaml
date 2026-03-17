@@ -19,6 +19,8 @@ dependencies:
 
   # HTTP para consumir APIs
   http: ^1.1.0
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.1.6
 
   # Persistência local (Windows, Web, Mobile)
   shared_preferences: ^2.1.1
@@ -54,6 +56,7 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   url_launcher: ^6.2.0  # Open URLs in browser/external apps
   mask_text_input_formatter: ^2.7.0
+  archive: ^3.6.1
 
 dev_dependencies:
   flutter_test:
@@ -76,24 +79,27 @@ dev_dependencies:
 
 # ⚙️ CONFIGURAÇÃO DO ÍCONE
 flutter_launcher_icons:
-  image_path: "assets/icon/app_icon.png"
+  image_path: "assets/icon/app_icon_padded.png"
   android: true
   ios: true
   min_sdk_android: 21
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/icon/app_icon_padded.png"
+  remove_alpha_ios: true
   web:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/icon/app_icon_padded.png"
     background_color: "#ffffff"
     theme_color: "#ffffff"
   windows:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/icon/app_icon_padded.png"
   macos:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/icon/app_icon_padded.png"
   linux:
     generate: true
-    image_path: "assets/icon/app_icon.png"
+    image_path: "assets/icon/app_icon_padded.png"
 
 flutter:
   uses-material-design: true
@@ -101,4 +107,5 @@ flutter:
 
   assets:
     - assets/icon/app_icon.png
+    - assets/icon/app_icon_padded.png
 

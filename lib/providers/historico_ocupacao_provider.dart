@@ -76,6 +76,8 @@ class HistoricoOcupacaoProvider extends BaseProvider {
         _eventosDetalhados = await _resolverNomesEventos(eventos);
         
         _historicosDetalhados = _agruparEventos(_eventosDetalhados);
+        _historicosDetalhados =
+            _ajustarAtivosPorApartamento(_historicosDetalhados);
 
         AppLogger.info('HistoricoOcupacao', '✅ Carregados ${_historicosDetalhados.length} registros do apartamento');
         AppLogger.info('HistoricoOcupacao', '✅ Carregados ${_eventosDetalhados.length} eventos detalhados');
@@ -110,6 +112,8 @@ class HistoricoOcupacaoProvider extends BaseProvider {
         _eventosDetalhados = await _resolverNomesEventos(eventos);
         
         _historicosDetalhados = _agruparEventos(_eventosDetalhados);
+        _historicosDetalhados =
+            _ajustarAtivosPorMorador(_historicosDetalhados);
 
         AppLogger.info('HistoricoOcupacao', '✅ Carregados ${_historicosDetalhados.length} registros do morador');
         AppLogger.info('HistoricoOcupacao', '✅ Carregados ${_eventosDetalhados.length} eventos detalhados');
@@ -133,14 +137,22 @@ class HistoricoOcupacaoProvider extends BaseProvider {
   /// Resolve os nomes dos moradores e executores e retorna eventos atualizados
   Future<List<HistoricoOcupacaoResumo>> _resolverNomesEventos(List<HistoricoOcupacaoResumo> eventos) async {
     if (eventos.isEmpty) return eventos;
+
+    bool isPlaceholderNome(String nome) {
+      final n = nome.trim().toLowerCase();
+      return n.isEmpty || n == 'residente' || n == 'morador' || n == 'sem nome' || n == 'desconhecido';
+    }
     
     // Coleta IDs únicos para resolver
     final moradorIdsParaResolver = <String>{};
     final executorIdsParaResolver = <String>{};
     
     for (final evento in eventos) {
-      // Morador
-      if (evento.moradorId.isNotEmpty && evento.nomeMorador.isEmpty) {
+      // Morador: if missing id, resolve by name later
+      if (evento.moradorId.isEmpty && evento.nomeMorador.trim().isNotEmpty) {
+        continue;
+      }
+      if (evento.moradorId.isNotEmpty && isPlaceholderNome(evento.nomeMorador)) {
         if (!_nomesMoradoresCache.containsKey(evento.moradorId)) {
           moradorIdsParaResolver.add(evento.moradorId);
         }
@@ -178,8 +190,10 @@ class HistoricoOcupacaoProvider extends BaseProvider {
       String nomeExecutor = evento.nomeExecutor;
       
       // Resolve nome do morador
-      if (nomeMorador.isEmpty && evento.moradorId.isNotEmpty) {
+      if (isPlaceholderNome(nomeMorador) && evento.moradorId.isNotEmpty) {
         nomeMorador = _nomesMoradoresCache[evento.moradorId] ?? 'Residente';
+      } else if (nomeMorador.isEmpty) {
+        nomeMorador = 'Residente';
       }
       
       // Resolve nome do executor
@@ -376,6 +390,91 @@ class HistoricoOcupacaoProvider extends BaseProvider {
 
     resultados.sort((a, b) => b.dataEntrada.compareTo(a.dataEntrada));
     return resultados;
+  }
+
+  List<HistoricoOcupacao> _ajustarAtivosPorApartamento(
+    List<HistoricoOcupacao> historicos,
+  ) {
+    if (historicos.isEmpty) return historicos;
+
+    final porApartamento = <String, List<HistoricoOcupacao>>{};
+    for (final historico in historicos) {
+      if (historico.apartamentoId.trim().isEmpty) continue;
+      porApartamento.putIfAbsent(historico.apartamentoId, () => []).add(historico);
+    }
+
+    if (porApartamento.isEmpty) return historicos;
+
+    final atualizados = <HistoricoOcupacao>[];
+    final indexMap = <String, HistoricoOcupacao>{};
+    for (final historico in historicos) {
+      indexMap['${historico.apartamentoId}:${historico.moradorId}:${historico.dataEntrada.toIso8601String()}'] =
+          historico;
+    }
+
+    for (final entry in porApartamento.entries) {
+      final lista = entry.value..sort((a, b) => b.dataEntrada.compareTo(a.dataEntrada));
+      final maisRecente = lista.first;
+
+      for (final historico in lista) {
+        if (identical(historico, maisRecente)) {
+          atualizados.add(historico);
+          continue;
+        }
+
+        if (historico.dataSaida != null) {
+          atualizados.add(historico);
+          continue;
+        }
+
+        atualizados.add(historico.copyWith(dataSaida: maisRecente.dataEntrada));
+      }
+    }
+
+    // Reaproveita qualquer histórico que não teve apartamentoId
+    final semApartamento = historicos.where((h) => h.apartamentoId.trim().isEmpty);
+    atualizados.addAll(semApartamento);
+
+    atualizados.sort((a, b) => b.dataEntrada.compareTo(a.dataEntrada));
+    return atualizados;
+  }
+
+  List<HistoricoOcupacao> _ajustarAtivosPorMorador(
+    List<HistoricoOcupacao> historicos,
+  ) {
+    if (historicos.isEmpty) return historicos;
+
+    final porMorador = <String, List<HistoricoOcupacao>>{};
+    for (final historico in historicos) {
+      if (historico.moradorId.trim().isEmpty) continue;
+      porMorador.putIfAbsent(historico.moradorId, () => []).add(historico);
+    }
+
+    if (porMorador.isEmpty) return historicos;
+
+    final atualizados = <HistoricoOcupacao>[];
+    for (final entry in porMorador.entries) {
+      final lista = entry.value..sort((a, b) => b.dataEntrada.compareTo(a.dataEntrada));
+      final maisRecente = lista.first;
+
+      for (final historico in lista) {
+        if (identical(historico, maisRecente)) {
+          atualizados.add(historico);
+          continue;
+        }
+        if (historico.dataSaida != null) {
+          atualizados.add(historico);
+          continue;
+        }
+        atualizados.add(historico.copyWith(dataSaida: maisRecente.dataEntrada));
+      }
+    }
+
+    final semMorador = historicos.where((h) => h.moradorId.trim().isEmpty);
+    atualizados.addAll(semMorador);
+
+    atualizados.sort((a, b) => b.dataEntrada.compareTo(a.dataEntrada));
+    return atualizados;
   }
 
   bool _isEntradaEvento(HistoricoOcupacaoResumo evento) {

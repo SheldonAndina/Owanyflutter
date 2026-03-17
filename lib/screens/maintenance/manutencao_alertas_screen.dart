@@ -28,6 +28,8 @@ class ManutencaoAlertasScreen extends StatefulWidget {
 class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
     with TickerProviderStateMixin {
   String _filtro = 'todas';
+  // control expanded/collapsed state per section (default collapsed)
+  final Map<String, bool> _expandedSections = {};
 
   late AnimationController _headerAnimController;
   late AnimationController _statsAnimController;
@@ -35,7 +37,7 @@ class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
   late Animation<Offset> _headerSlideAnimation;
 
   final ScrollController _scrollController = ScrollController();
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
 
   @override
   void initState() {
@@ -71,11 +73,12 @@ class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
     _headerAnimController.dispose();
     _statsAnimController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    setState(() => _scrollOffset = _scrollController.offset);
+    _scrollOffset.value = _scrollController.offset;
   }
 
   Future<void> _load({bool forceReload = false}) async {
@@ -135,16 +138,28 @@ class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
       IconData icon,
       List<ManutencaoPreventivaDto> list,
       String emptyMsg,
-    ) {
+      {bool compact = false}) {
+      final expanded = _expandedSections[title] ?? false;
+      if (widgets.isNotEmpty) widgets.add(const SizedBox(height: 8));
+      widgets.add(_SectionHeader(
+        title: title,
+        subtitle: subtitle,
+        color: color,
+        icon: icon,
+        count: list.length,
+        expanded: expanded,
+        onToggle: () {
+          setState(() => _expandedSections[title] = !expanded);
+          HapticFeedback.selectionClick();
+        },
+      ));
+
+      if (!expanded) {
+        widgets.add(const SizedBox(height: 6));
+        return;
+      }
+
       if (list.isNotEmpty) {
-        if (widgets.isNotEmpty) widgets.add(const SizedBox(height: 8));
-        widgets.add(_SectionHeader(
-          title: title,
-          subtitle: subtitle,
-          color: color,
-          icon: icon,
-          count: list.length,
-        ));
         widgets.add(const SizedBox(height: 10));
         for (int i = 0; i < list.length; i++) {
           widgets.add(TweenAnimationBuilder<double>(
@@ -158,7 +173,7 @@ class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
                 child: Opacity(opacity: clamped, child: child),
               );
             },
-            child: _PremiumMaintenanceCard(manutencao: list[i]),
+            child: _PremiumMaintenanceCard(manutencao: list[i], compact: compact),
           ));
         }
         sectionIndex += list.length;
@@ -189,28 +204,82 @@ class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
           widgets.add(_EmptyState(message: l10n.mp_alerts_none_registered));
           break;
         }
-        if (vencidas.isNotEmpty)
-          section(l10n.mp_alerts_overdue, l10n.mp_alerts_overdue_subtitle,
-              OwanyTheme.error, Icons.warning_rounded, vencidas, '');
-        if (emAlerta.isNotEmpty)
-          section(
-              l10n.mp_alerts_in_alert,
-              l10n.mp_alerts_in_alert_subtitle,
-              OwanyTheme.warning,
-              Icons.notification_important_rounded,
-              emAlerta,
-              '');
-        if (proximas.isNotEmpty)
-          section(
-              l10n.mp_alerts_upcoming,
-              l10n.mp_alerts_upcoming_subtitle,
-              OwanyTheme.primaryOrange,
-              Icons.schedule_rounded,
-              proximas,
-              '');
-        if (normais.isNotEmpty)
-          section(l10n.mp_alerts_planned, l10n.mp_alerts_planned_subtitle,
-              OwanyTheme.success, Icons.check_circle_rounded, normais, '');
+
+        // Split into Imediatas (sem frequência) and Recorrentes (com frequência)
+        final semFrequencia = all.where((m) {
+          final f = (m.frequencia ?? '').trim();
+          return f.isEmpty || f.toLowerCase() == 'null';
+        }).toList();
+
+        final recorrentes = all.where((m) {
+          final f = (m.frequencia ?? '').trim();
+          return f.isNotEmpty && f.toLowerCase() != 'null';
+        }).toList();
+
+        // Imediatas top-level section
+        final imediatasExpanded = _expandedSections['Imediatas'] ?? false;
+        widgets.add(_SectionHeader(
+          title: 'Imediatas',
+          subtitle: '${semFrequencia.length} itens',
+          color: OwanyTheme.primaryOrange,
+          icon: Icons.flash_on_rounded,
+          count: semFrequencia.length,
+          expanded: imediatasExpanded,
+          onToggle: () => setState(() => _expandedSections['Imediatas'] = !imediatasExpanded),
+        ));
+
+        if (imediatasExpanded) {
+          // Dentro de Imediatas: Concluídas (já executadas) e Pendentes
+          final concluidas = semFrequencia.where((m) => (m.totalExecucoes ?? 0) > 0 || m.ultimaExecucao != null).toList();
+          final pendentes = semFrequencia.where((m) => !((m.totalExecucoes ?? 0) > 0 || m.ultimaExecucao != null)).toList();
+
+          if (concluidas.isNotEmpty) {
+            widgets.add(const SizedBox(height: 8));
+            section('Concluídas', '', OwanyTheme.success, Icons.check_circle_rounded, concluidas, '', compact: true);
+          }
+          if (pendentes.isNotEmpty) {
+            widgets.add(const SizedBox(height: 8));
+            section('Pendentes', '', OwanyTheme.primaryOrange, Icons.pending_actions_rounded, pendentes, '', compact: true);
+          }
+        }
+
+        // Recorrentes top-level section
+        final recorrentesExpanded = _expandedSections['Recorrentes'] ?? false;
+        widgets.add(const SizedBox(height: 8));
+        widgets.add(_SectionHeader(
+          title: 'Recorrentes',
+          subtitle: '${recorrentes.length} itens',
+          color: OwanyTheme.info,
+          icon: Icons.repeat_rounded,
+          count: recorrentes.length,
+          expanded: recorrentesExpanded,
+          onToggle: () => setState(() => _expandedSections['Recorrentes'] = !recorrentesExpanded),
+        ));
+
+        if (recorrentesExpanded) {
+          // Dentro de Recorrentes mostramos vencidas, alertas, próximas e planejadas como sub-seções
+          final vencidasRec = vencidas.where((m) => recorrentes.contains(m)).toList();
+          final emAlertaRec = emAlerta.where((m) => recorrentes.contains(m)).toList();
+          final proximasRec = proximas.where((m) => recorrentes.contains(m)).toList();
+          final normaisRec = normais.where((m) => recorrentes.contains(m)).toList();
+
+          if (vencidasRec.isNotEmpty) {
+            widgets.add(const SizedBox(height: 8));
+            section(l10n.mp_alerts_overdue, l10n.mp_alerts_overdue_subtitle, OwanyTheme.error, Icons.warning_rounded, vencidasRec, '', compact: true);
+          }
+          if (emAlertaRec.isNotEmpty) {
+            widgets.add(const SizedBox(height: 8));
+            section(l10n.mp_alerts_in_alert, l10n.mp_alerts_in_alert_subtitle, OwanyTheme.warning, Icons.notification_important_rounded, emAlertaRec, '', compact: true);
+          }
+          if (proximasRec.isNotEmpty) {
+            widgets.add(const SizedBox(height: 8));
+            section(l10n.mp_alerts_upcoming, l10n.mp_alerts_upcoming_subtitle, OwanyTheme.primaryOrange, Icons.schedule_rounded, proximasRec, '', compact: true);
+          }
+          if (normaisRec.isNotEmpty) {
+            widgets.add(const SizedBox(height: 8));
+            section(l10n.mp_alerts_planned, l10n.mp_alerts_planned_subtitle, OwanyTheme.success, Icons.check_circle_rounded, normaisRec, '', compact: true);
+          }
+        }
     }
 
     return widgets;
@@ -234,7 +303,11 @@ class _ManutencaoAlertasScreenState extends State<ManutencaoAlertasScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(scrollOffset: _scrollOffset, l10n: l10n),
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) =>
+              _GlassAppBar(scrollOffset: value, l10n: l10n),
+        ),
       ),
       body: provider.isLoadingLista
           ? _PremiumSkeletonLoader()
@@ -403,10 +476,11 @@ class _GlassAppBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -471,6 +545,7 @@ class _GlassAppBar extends StatelessWidget {
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),
@@ -975,13 +1050,14 @@ class _PremiumFilterBar extends StatelessWidget {
 // =============================================================
 // SECTION HEADER
 // =============================================================
-
 class _SectionHeader extends StatelessWidget {
   final String title;
   final String subtitle;
   final Color color;
   final IconData icon;
   final int count;
+  final bool expanded;
+  final VoidCallback? onToggle;
 
   const _SectionHeader({
     required this.title,
@@ -989,102 +1065,121 @@ class _SectionHeader extends StatelessWidget {
     required this.color,
     required this.icon,
     required this.count,
+    this.expanded = false,
+    this.onToggle,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [
-          color.withValues(alpha: 0.12),
-          color.withValues(alpha: 0.04),
-        ]),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onToggle,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.08),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [color, color.withValues(alpha: 0.7)],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              color.withValues(alpha: 0.12),
+              color.withValues(alpha: 0.04),
+            ]),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.08),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
               ),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: Icon(icon, color: Colors.white, size: 20),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    color: color,
-                    letterSpacing: 0.8,
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [color, color.withValues(alpha: 0.7)],
                   ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: OwanyTheme.textMutedColor(context),
-                    fontWeight: FontWeight.w500,
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color: color,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: OwanyTheme.textMutedColor(context),
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [color, color.withValues(alpha: 0.8)],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.3),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [color, color.withValues(alpha: 0.8)],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.3),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '$count',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-            child: Text(
-              '$count',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1096,8 +1191,9 @@ class _SectionHeader extends StatelessWidget {
 
 class _PremiumMaintenanceCard extends StatefulWidget {
   final ManutencaoPreventivaDto manutencao;
+  final bool compact;
 
-  const _PremiumMaintenanceCard({required this.manutencao});
+  const _PremiumMaintenanceCard({required this.manutencao, this.compact = false});
 
   @override
   State<_PremiumMaintenanceCard> createState() =>
@@ -1146,31 +1242,32 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
             transform: Matrix4.identity()..scale(_isHovered ? 1.015 : 1.0),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 12),
+                child: Container(
+              margin: EdgeInsets.only(bottom: widget.compact ? 8 : 12),
               decoration: BoxDecoration(
                 color: OwanyTheme.cardColor(context),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(widget.compact ? 14 : 20),
                 border: Border.all(
                   color: _isHovered
                       ? OwanyTheme.borderColor(context).withValues(alpha: 0.5)
-                      : OwanyTheme.borderColor(context).withValues(alpha: 0.25),
-                  width: _isHovered ? 1.4 : 1,
+                      : OwanyTheme.borderColor(context).withValues(alpha: widget.compact ? 0.18 : 0.25),
+                  width: _isHovered ? 1.2 : (widget.compact ? 0.8 : 1),
                 ),
                 boxShadow: [
                   BoxShadow(
                     color: _isHovered
                         ? OwanyTheme.textMutedColor(context)
-                            .withValues(alpha: 0.1)
+                            .withValues(alpha: 0.08)
                         : OwanyTheme.textMutedColor(context)
-                            .withValues(alpha: 0.04),
-                    blurRadius: _isHovered ? 12 : 6,
-                    offset: Offset(0, _isHovered ? 4 : 2),
+                            .withValues(alpha: widget.compact ? 0.02 : 0.04),
+                    blurRadius: _isHovered ? (widget.compact ? 8 : 12) : (widget.compact ? 4 : 6),
+                    offset: Offset(0, _isHovered ? (widget.compact ? 3 : 4) : (widget.compact ? 1.5 : 2)),
                   ),
                 ],
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius:
+                    BorderRadius.circular(widget.compact ? 14 : 20),
                 child: Stack(
                   children: [
                     IntrinsicHeight(
@@ -1179,12 +1276,14 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
                         children: [
                         // Left accent stripe
                         Container(
-                          width: 5,
+                          width: widget.compact ? 4 : 5,
                           decoration: BoxDecoration(
                             color: sc,
-                            borderRadius: const BorderRadius.only(
-                              topLeft: Radius.circular(20),
-                              bottomLeft: Radius.circular(20),
+                            borderRadius: BorderRadius.only(
+                              topLeft:
+                                  Radius.circular(widget.compact ? 14 : 20),
+                              bottomLeft:
+                                  Radius.circular(widget.compact ? 14 : 20),
                             ),
                           ),
                         ),
@@ -1192,8 +1291,7 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
                         // Content
                         Expanded(
                           child: Padding(
-                            padding:
-                                const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                            padding: EdgeInsets.fromLTRB(widget.compact ? 10 : 14, widget.compact ? 10 : 14, widget.compact ? 10 : 14, widget.compact ? 10 : 14),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1206,14 +1304,14 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
                                       child: Text(
                                         m.titulo,
                                         style: TextStyle(
-                                          fontSize: 15,
+                                          fontSize: widget.compact ? 13 : 15,
                                           fontWeight: FontWeight.w800,
                                           color: OwanyTheme.textPrimary(
                                               context),
                                           letterSpacing: -0.2,
-                                          height: 1.3,
+                                          height: 1.2,
                                         ),
-                                        maxLines: 2,
+                                        maxLines: widget.compact ? 1 : 2,
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
@@ -1221,12 +1319,12 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
 
                                     // Days badge — gradient version
                                     Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 8),
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: widget.compact ? 8 : 10, vertical: widget.compact ? 6 : 8),
                                       decoration: BoxDecoration(
                                         color: sc.withValues(alpha: 0.1),
                                         borderRadius:
-                                            BorderRadius.circular(14),
+                                            BorderRadius.circular(widget.compact ? 10 : 14),
                                         border: Border.all(
                                           color: sc.withValues(alpha: 0.25),
                                         ),
@@ -1236,7 +1334,7 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
                                           Text(
                                             '${m.diasFaltantes.abs()}',
                                             style: TextStyle(
-                                              fontSize: 20,
+                                              fontSize: widget.compact ? 16 : 20,
                                               fontWeight: FontWeight.w900,
                                               color: sc,
                                               letterSpacing: -0.5,
@@ -1248,7 +1346,7 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
                                                 ? l10n.mp_alerts_overdue_suffix
                                                 : l10n.mp_list_days_suffix,
                                             style: TextStyle(
-                                              fontSize: 9,
+                                              fontSize: widget.compact ? 8 : 9,
                                               fontWeight: FontWeight.w700,
                                               color: sc.withValues(alpha: 0.7),
                                               letterSpacing: 0.2,
@@ -1307,43 +1405,56 @@ class _PremiumMaintenanceCardState extends State<_PremiumMaintenanceCard> {
                                   ],
                                 ),
 
-                                const SizedBox(height: 12),
-
-                                // Divider
-                                Container(
-                                  height: 1,
-                                  color: OwanyTheme.borderColor(context)
-                                      .withValues(alpha: 0.2),
-                                ),
-
-                                const SizedBox(height: 12),
-
-                                // Detail items row
-                                Wrap(
-                                  spacing: 14,
-                                  runSpacing: 8,
-                                  children: [
-                                    _DetailItem(
-                                      icon: Icons.schedule_rounded,
-                                      label: l10n.mp_alerts_next,
-                                      value: DateFormat('dd/MM/yyyy')
-                                          .format(m.proximaManutencao),
+                                if (widget.compact) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    '${l10n.mp_alerts_next}: ${DateFormat('dd/MM/yyyy').format(m.proximaManutencao)}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color:
+                                          OwanyTheme.textMutedColor(context),
+                                      fontWeight: FontWeight.w600,
                                     ),
-                                    _DetailItem(
-                                      icon: Icons.attach_money_rounded,
-                                      label: l10n.mp_alerts_cost,
-                                      value:
-                                          'MZN ${(m.custoEstimado ?? 0.0).toStringAsFixed(2).replaceAll('.', ',')}',
-                                    ),
-                                    if (m.responsavelNome != null &&
-                                        m.responsavelNome!.isNotEmpty)
+                                  ),
+                                ] else ...[
+                                  const SizedBox(height: 12),
+
+                                  // Divider
+                                  Container(
+                                    height: 1,
+                                    color: OwanyTheme.borderColor(context)
+                                        .withValues(alpha: 0.2),
+                                  ),
+
+                                  const SizedBox(height: 12),
+
+                                  // Detail items row
+                                  Wrap(
+                                    spacing: 14,
+                                    runSpacing: 8,
+                                    children: [
                                       _DetailItem(
-                                        icon: Icons.person_rounded,
-                                        label: l10n.mp_responsible,
-                                        value: m.responsavelNome!,
+                                        icon: Icons.schedule_rounded,
+                                        label: l10n.mp_alerts_next,
+                                        value: DateFormat('dd/MM/yyyy')
+                                            .format(m.proximaManutencao),
                                       ),
-                                  ],
-                                ),
+                                      _DetailItem(
+                                        icon: Icons.attach_money_rounded,
+                                        label: l10n.mp_alerts_cost,
+                                        value:
+                                            'MZN ${(m.custoEstimado ?? 0.0).toStringAsFixed(2).replaceAll('.', ',')}',
+                                      ),
+                                      if (m.responsavelNome != null &&
+                                          m.responsavelNome!.isNotEmpty)
+                                        _DetailItem(
+                                          icon: Icons.person_rounded,
+                                          label: l10n.mp_responsible,
+                                          value: m.responsavelNome!,
+                                        ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),

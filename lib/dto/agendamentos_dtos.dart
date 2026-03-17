@@ -137,7 +137,12 @@ class AgendamentoMaintenanceDto {
       numeroApartamento: json['apartamentoNumero']?.toString() ?? json['numeroApartamento']?.toString(),
       blocoApartamento: json['apartamentoBloco']?.toString() ?? json['blocoApartamento']?.toString(),
       titulo: json['titulo'] ?? '',
-      descricao: json['descricao'],
+      descricao: json['descricao'] ??
+          json['Descricao'] ??
+          json['descricaoManutencao'] ??
+          json['descricaoServico'] ??
+          json['observacoes'] ??
+          json['Observacoes'],
       tipo: json['tipo']?.toString(),
       tipoSolicitacaoId: json['tipoSolicitacaoId'],
       tipoSolicitacaoNome: json['tipoSolicitacaoNome'],

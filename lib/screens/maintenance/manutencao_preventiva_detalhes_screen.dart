@@ -43,8 +43,10 @@ class _ManutencaoPreventivaDetalhesScreenState
   late Animation<double> _contentFade;
   late Animation<Offset> _contentSlide;
 
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
   final _scrollCtrl = ScrollController();
+
+  String _historicoFiltro = 'todos';
 
   static final FilteringTextInputFormatter _moneyInputFormatter =
       FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'));
@@ -118,7 +120,7 @@ class _ManutencaoPreventivaDetalhesScreenState
 
     _scrollCtrl.addListener(() {
       if (mounted) {
-        setState(() => _scrollOffset = _scrollCtrl.offset);
+        _scrollOffset.value = _scrollCtrl.offset;
       }
     });
 
@@ -141,12 +143,13 @@ class _ManutencaoPreventivaDetalhesScreenState
     _headerAnimController.dispose();
     _contentAnimController.dispose();
     _scrollCtrl.dispose();
+    _scrollOffset.dispose();
     super.dispose();
   }
 
   // ── AppBar opacity ────────────────────────────────────────────────────────
 
-  double get _appBarOpacity => (_scrollOffset / 100).clamp(0.0, 1.0);
+  double _appBarOpacity(double offset) => (offset / 100).clamp(0.0, 1.0);
 
   // ── build ─────────────────────────────────────────────────────────────────
 
@@ -203,15 +206,20 @@ class _ManutencaoPreventivaDetalhesScreenState
                 ? OwanyTheme.warning
                 : OwanyTheme.success;
 
-        return Scaffold(
-          extendBodyBehindAppBar: true,
-          backgroundColor: OwanyTheme.backgroundColor(context),
-          appBar: _buildGlassAppBar(context, opacity: _appBarOpacity,
-              statusColor: statusColor),
-          body: CustomScrollView(
-            controller: _scrollCtrl,
-            physics: const BouncingScrollPhysics(),
-            slivers: [
+        return ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, offset, __) => Scaffold(
+            extendBodyBehindAppBar: true,
+            backgroundColor: OwanyTheme.backgroundColor(context),
+            appBar: _buildGlassAppBar(
+              context,
+              opacity: _appBarOpacity(offset),
+              statusColor: statusColor,
+            ),
+            body: CustomScrollView(
+              controller: _scrollCtrl,
+              physics: const BouncingScrollPhysics(),
+              slivers: [
               // Space for glass app bar
               const SliverToBoxAdapter(child: SizedBox(height: 120)),
 
@@ -272,7 +280,8 @@ class _ManutencaoPreventivaDetalhesScreenState
                   ),
                 ),
               ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -621,14 +630,26 @@ class _ManutencaoPreventivaDetalhesScreenState
     final l10n = AppLocalizations.of(context)!;
     final historicosOrdenados = [...historicos]
       ..sort((a, b) => b.dataRealizacao.compareTo(a.dataRealizacao));
+    final historicosFiltrados = historicosOrdenados.where((item) {
+      switch (_historicoFiltro) {
+        case 'concluidas':
+          return _isConcluida(item);
+        case 'canceladas':
+          return _isCancelada(item);
+        case 'andamento':
+          return _isEmAndamento(item);
+        default:
+          return true;
+      }
+    }).toList();
 
     if (historicosOrdenados.isEmpty) {
       final houveErro = erro != null && erro.trim().isNotEmpty;
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(40),
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(40),
+        child: Center(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
                 padding: const EdgeInsets.all(24),
@@ -677,6 +698,8 @@ class _ManutencaoPreventivaDetalhesScreenState
           _buildTimelineSummary(context, manutencao, l10n),
           const SizedBox(height: 20),
 
+          const SizedBox(height: 12),
+
           // Conclude button (disabled for pontual already concluded)
           if (_isPontualJaConcluida(manutencao))
             Container(
@@ -713,8 +736,8 @@ class _ManutencaoPreventivaDetalhesScreenState
               onTap: () => _showConcluirDialog(context, manutencao),
             ),
 
-          if (historicosOrdenados.isNotEmpty) ...[
-            const SizedBox(height: 24),
+        if (historicosOrdenados.isNotEmpty) ...[
+          const SizedBox(height: 24),
 
             // Section header
             _PremiumSectionHeader(
@@ -725,10 +748,10 @@ class _ManutencaoPreventivaDetalhesScreenState
             const SizedBox(height: 12),
 
             // History items with stagger
-            ...historicosOrdenados.asMap().entries.map((e) {
-              final index = e.key;
-              final item = e.value;
-              return TweenAnimationBuilder<double>(
+          ...historicosFiltrados.asMap().entries.map((e) {
+            final index = e.key;
+            final item = e.value;
+            return TweenAnimationBuilder<double>(
                 tween: Tween(begin: 0.0, end: 1.0),
                 duration: Duration(milliseconds: 250 + (index * 50)),
                 curve: Curves.easeOut,
@@ -844,12 +867,8 @@ class _ManutencaoPreventivaDetalhesScreenState
     HistoricoManutencaoPreventivaDto item,
     AppLocalizations l10n,
   ) {
-    final statusLower = item.status.toLowerCase();
-    final statusColor = statusLower.contains('concl')
-        ? OwanyTheme.success
-        : statusLower.contains('cancel')
-            ? OwanyTheme.error
-            : OwanyTheme.warning;
+    final statusLabel = _statusDisplayLabel(item.status, l10n);
+    final statusColor = _statusColor(item);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -899,7 +918,7 @@ class _ManutencaoPreventivaDetalhesScreenState
                     ],
                   ),
                   child: Text(
-                    item.status,
+                    statusLabel,
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -994,7 +1013,62 @@ class _ManutencaoPreventivaDetalhesScreenState
                         ),
                       ),
                     ],
-                  ],
+                    ],
+                  ),
+                if (item.realizadoPorId != null &&
+                    item.realizadoPorId!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color:
+                              OwanyTheme.primaryBrown.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(Icons.badge_rounded,
+                            size: 14, color: OwanyTheme.primaryBrown),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: SelectableText(
+                          'ID Responsável: ${item.realizadoPorId!}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: OwanyTheme.textMutedColor(context),
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: OwanyTheme.surfaceColor(context),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: OwanyTheme.borderColor(context)),
+                  ),
+                  child: Column(
+                    children: [
+                      _buildMetaRow(
+                        context,
+                        _tx('Realizado em', 'Executed on'),
+                        _formatarData(item.dataRealizacao),
+                      ),
+                      _buildMetaRow(
+                        context,
+                        _tx('Criado em', 'Created on'),
+                        _formatarData(item.criadoEm),
+                      ),
+                      // IDs removed from UI (maintenance/execution IDs not shown)
+                    ],
+                  ),
                 ),
                 if (item.observacoes != null &&
                     item.observacoes!.isNotEmpty) ...[
@@ -1075,14 +1149,14 @@ class _ManutencaoPreventivaDetalhesScreenState
                             ),
                             ...item.fotosAntes!.map((url) => Padding(
                               padding: const EdgeInsets.only(top: 2),
-                              child: Text(
+                              child: SelectableText(
                                 url,
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: OwanyTheme.info,
                                   decoration: TextDecoration.underline,
                                 ),
-                                overflow: TextOverflow.ellipsis,
+                                maxLines: 5,
                               ),
                             )),
                           ],
@@ -1121,14 +1195,14 @@ class _ManutencaoPreventivaDetalhesScreenState
                             ),
                             ...item.fotosDepois!.map((url) => Padding(
                               padding: const EdgeInsets.only(top: 2),
-                              child: Text(
+                              child: SelectableText(
                                 url,
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: OwanyTheme.info,
                                   decoration: TextDecoration.underline,
                                 ),
-                                overflow: TextOverflow.ellipsis,
+                                maxLines: 5,
                               ),
                             )),
                           ],
@@ -1153,14 +1227,14 @@ class _ManutencaoPreventivaDetalhesScreenState
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(
+                        child: SelectableText(
                           'Solicitação: ${item.solicitacaoId!}',
                           style: TextStyle(
                             fontSize: 12,
                             color: OwanyTheme.textMutedColor(context),
                             fontWeight: FontWeight.w600,
                           ),
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                         ),
                       ),
                     ],
@@ -1173,6 +1247,86 @@ class _ManutencaoPreventivaDetalhesScreenState
       ),
     );
   }
+
+  Color _statusColor(HistoricoManutencaoPreventivaDto item) {
+    final code = item.statusCodigo;
+    if (code == 2) return OwanyTheme.success;
+    if (code == 1) return OwanyTheme.error;
+    if (code == 0) return OwanyTheme.warning;
+    final statusLower = item.status.toLowerCase();
+    if (statusLower.contains('concl')) return OwanyTheme.success;
+    if (statusLower.contains('cancel')) return OwanyTheme.error;
+    if (statusLower.contains('andamento')) return OwanyTheme.warning;
+    return OwanyTheme.info;
+  }
+
+  String _statusDisplayLabel(String status, AppLocalizations l10n) {
+    final normalized = status.trim();
+    if (normalized.isEmpty) return _tx('Desconhecido', 'Unknown');
+    final lower = normalized.toLowerCase();
+    if (lower.contains('concl')) return l10n.mp_status_concluida;
+    if (lower.contains('cancel')) return l10n.mp_status_cancelada;
+    if (lower.contains('andamento') || lower.contains('progress')) {
+      return l10n.mp_status_em_andamento;
+    }
+    return normalized;
+  }
+
+  bool _isConcluida(HistoricoManutencaoPreventivaDto item) {
+    if (item.statusCodigo == 2) return true;
+    final lower = item.status.toLowerCase();
+    return lower.contains('concl');
+  }
+
+  bool _isCancelada(HistoricoManutencaoPreventivaDto item) {
+    if (item.statusCodigo == 1) return true;
+    final lower = item.status.toLowerCase();
+    return lower.contains('cancel');
+  }
+
+  bool _isEmAndamento(HistoricoManutencaoPreventivaDto item) {
+    if (item.statusCodigo == 0) return true;
+    final lower = item.status.toLowerCase();
+    return lower.contains('andamento') || lower.contains('progress');
+  }
+
+  Widget _buildMetaRow(BuildContext context, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: OwanyTheme.textMutedColor(context),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: SelectableText(
+              value,
+              style: TextStyle(
+                fontSize: 11,
+                color: OwanyTheme.textPrimary(context),
+                fontWeight: FontWeight.w700,
+              ),
+              textAlign: TextAlign.right,
+              maxLines: 3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // (History summary and filters removed per request)
 
   // ── Premium section builder ───────────────────────────────────────────────
 

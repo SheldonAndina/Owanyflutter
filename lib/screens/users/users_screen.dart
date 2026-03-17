@@ -22,6 +22,18 @@ class _UsersScreenState extends State<UsersScreen> {
   final _searchController = TextEditingController();
   late Future<List<Usuario>> _usuariosFuture;
   UsuarioTipo? _filtroTipo;
+  List<Usuario>? _filteredCache;
+  List<Usuario>? _cachedAll;
+  int _cachedAllLength = -1;
+  String? _cachedAllFirstId;
+  String? _cachedAllLastId;
+  String _cachedSearch = '';
+  UsuarioTipo? _cachedFiltroTipo;
+  List<Usuario>? _searchIndexSource;
+  int _searchIndexLength = -1;
+  String? _searchIndexFirstId;
+  String? _searchIndexLastId;
+  Map<String, String> _searchIndex = {};
 
   @override
   void initState() {
@@ -42,6 +54,10 @@ class _UsersScreenState extends State<UsersScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
   }
 
   @override
@@ -152,10 +168,52 @@ class _UsersScreenState extends State<UsersScreen> {
             }
 
             final allUsuarios = snapshot.data ?? [];
-            final usuarios = allUsuarios
-                .where((u) => u.nome.toLowerCase().contains(_searchController.text.toLowerCase()))
-                .where((u) => _filtroTipo == null || u.tipo == _filtroTipo)
-                .toList();
+            final length = allUsuarios.length;
+            final firstId = length > 0 ? allUsuarios.first.id : null;
+            final lastId = length > 0 ? allUsuarios.last.id : null;
+            final search = _searchController.text.toLowerCase();
+            final canUseCache =
+                identical(_cachedAll, allUsuarios) &&
+                _cachedAllLength == length &&
+                _cachedAllFirstId == firstId &&
+                _cachedAllLastId == lastId &&
+                _cachedSearch == search &&
+                _cachedFiltroTipo == _filtroTipo &&
+                _filteredCache != null;
+            final usuarios = canUseCache
+                ? _filteredCache!
+                : (() {
+                    if (search.isNotEmpty &&
+                        (!identical(_searchIndexSource, allUsuarios) ||
+                            _searchIndexLength != length ||
+                            _searchIndexFirstId != firstId ||
+                            _searchIndexLastId != lastId)) {
+                      _searchIndexSource = allUsuarios;
+                      _searchIndexLength = length;
+                      _searchIndexFirstId = firstId;
+                      _searchIndexLastId = lastId;
+                      _searchIndex = {
+                        for (final u in allUsuarios)
+                          u.id: u.nome.toLowerCase(),
+                      };
+                    }
+                    final filtered = allUsuarios
+                        .where((u) => search.isEmpty
+                            ? true
+                            : (_searchIndex[u.id] ?? '').contains(search))
+                        .where((u) => _filtroTipo == null || u.tipo == _filtroTipo)
+                        .toList();
+                    return filtered;
+                  })();
+            if (!canUseCache) {
+              _cachedAll = allUsuarios;
+              _cachedAllLength = length;
+              _cachedAllFirstId = firstId;
+              _cachedAllLastId = lastId;
+              _cachedSearch = search;
+              _cachedFiltroTipo = _filtroTipo;
+              _filteredCache = usuarios;
+            }
 
             return Column(
               children: [
@@ -181,6 +239,7 @@ class _UsersScreenState extends State<UsersScreen> {
                                   icon: const Icon(Icons.clear, size: 20),
                                   onPressed: () {
                                     _searchController.clear();
+                                    _invalidateFilteredCache();
                                     setState(() {});
                                   },
                                 )
@@ -193,7 +252,10 @@ class _UsersScreenState extends State<UsersScreen> {
                             borderSide: BorderSide.none,
                           ),
                         ),
-                        onChanged: (_) => setState(() {}),
+                        onChanged: (_) {
+                          _invalidateFilteredCache();
+                          setState(() {});
+                        },
                       ),
                       const SizedBox(height: 12),
                       // Filter chips
@@ -288,7 +350,10 @@ class _UsersScreenState extends State<UsersScreen> {
         fontWeight: FontWeight.w500,
       ),
       side: BorderSide(color: isSelected ? color : OwanyTheme.borderColor(context)),
-      onSelected: (_) => setState(() => _filtroTipo = isSelected ? null : tipo),
+      onSelected: (_) => setState(() {
+        _filtroTipo = isSelected ? null : tipo;
+        _invalidateFilteredCache();
+      }),
     );
   }
 
@@ -340,9 +405,13 @@ class _UsersScreenState extends State<UsersScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Expanded(
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 240),
                             child: Text(
                               usuario.nome,
                               style: TextStyle(

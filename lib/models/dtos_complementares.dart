@@ -529,6 +529,40 @@ class ManutencaoPreventivaDto {
   );
 }
 
+// Status enum for preventive maintenance (UI-friendly mapping)
+enum StatusManutencaoPreventiva {
+  Agendada,
+  EmAndamento,
+  Concluida,
+  Atrasada,
+  Cancelada,
+}
+
+extension StatusManutencaoPreventivaExt on StatusManutencaoPreventiva {
+  String toPortuguese() {
+    switch (this) {
+      case StatusManutencaoPreventiva.Agendada:
+        return 'Agendada';
+      case StatusManutencaoPreventiva.EmAndamento:
+        return 'Em andamento';
+      case StatusManutencaoPreventiva.Concluida:
+        return 'Concluída';
+      case StatusManutencaoPreventiva.Atrasada:
+        return 'Atrasada';
+      case StatusManutencaoPreventiva.Cancelada:
+        return 'Cancelada';
+    }
+  }
+}
+
+// Heuristic to compute status from fields available on DTO
+StatusManutencaoPreventiva statusFromManutencao(ManutencaoPreventivaDto m) {
+  // Priority: use available flags
+  if (m.vencida) return StatusManutencaoPreventiva.Atrasada;
+  if (m.alerta) return StatusManutencaoPreventiva.Agendada;
+  return StatusManutencaoPreventiva.Agendada;
+}
+
 class CriarManutencaoPreventivaRequest {
   final String titulo;
   final String? descricao;
@@ -629,6 +663,7 @@ class HistoricoManutencaoPreventivaDto {
   final String manutencaoTitulo;
   final DateTime dataRealizacao;
   final String status;
+  final int? statusCodigo;
   final double? custoReal;
   final String? descricaoExecucao;
   final String? observacoes;
@@ -636,6 +671,7 @@ class HistoricoManutencaoPreventivaDto {
   final List<String>? fotosAntes;
   final List<String>? fotosDepois;
   final String realizadoPorNome;
+  final String? realizadoPorId;
   final String? solicitacaoId;
   final DateTime criadoEm;
 
@@ -645,6 +681,7 @@ class HistoricoManutencaoPreventivaDto {
     required this.manutencaoTitulo,
     required this.dataRealizacao,
     required this.status,
+    this.statusCodigo,
     this.custoReal,
     this.descricaoExecucao,
     this.observacoes,
@@ -652,6 +689,7 @@ class HistoricoManutencaoPreventivaDto {
     this.fotosAntes,
     this.fotosDepois,
     required this.realizadoPorNome,
+    this.realizadoPorId,
     this.solicitacaoId,
     required this.criadoEm,
   });
@@ -661,7 +699,8 @@ class HistoricoManutencaoPreventivaDto {
     manutencaoPreventivaId: json['manutencaoPreventivaId'] as String? ?? '',
     manutencaoTitulo: json['manutencaoTitulo'] as String? ?? '',
     dataRealizacao: parseBackendDateTimeToLocal(json['dataRealizacao']),
-    status: json['status'] as String? ?? '',
+    status: _parseStatusLabel(json['status']),
+    statusCodigo: _parseStatusCode(json['status']),
     custoReal: (json['custoReal'] as num?)?.toDouble(),
     descricaoExecucao: json['descricaoExecucao'] as String?,
     observacoes: json['observacoes'] as String?,
@@ -669,9 +708,41 @@ class HistoricoManutencaoPreventivaDto {
     fotosAntes: _parseFotos(json['fotosAntes']),
     fotosDepois: _parseFotos(json['fotosDepois']),
     realizadoPorNome: json['realizadoPorNome'] as String? ?? '',
+    realizadoPorId: json['realizadoPorId'] as String?,
     solicitacaoId: json['solicitacaoId'] as String?,
     criadoEm: parseBackendDateTimeToLocal(json['criadoEm']),
   );
+
+  static int? _parseStatusCode(dynamic raw) {
+    if (raw is num) return raw.toInt();
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return null;
+      return int.tryParse(trimmed);
+    }
+    return null;
+  }
+
+  static String _parseStatusLabel(dynamic raw) {
+    if (raw is String) return raw;
+    if (raw is num) {
+      return _statusCodeToLabel(raw.toInt());
+    }
+    return raw?.toString() ?? '';
+  }
+
+  static String _statusCodeToLabel(int code) {
+    switch (code) {
+      case 2:
+        return 'Concluida';
+      case 1:
+        return 'Cancelada';
+      case 0:
+        return 'EmAndamento';
+      default:
+        return 'Status $code';
+    }
+  }
 
   static List<String>? _parseFotos(dynamic raw) {
     if (raw == null) return null;

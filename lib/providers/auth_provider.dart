@@ -30,6 +30,8 @@ class AuthProvider extends ChangeNotifier {
   String? _tempNomeLogin;
   String? _tempUsuarioId;
   StreamSubscription<Map<String, dynamic>>? _moradorDataChangedSub;
+  static const String _inactiveUserMessage =
+      'Usuário desativado. Contacte o administrador.';
 
   // Getters
   Usuario? get usuarioAtual => _usuarioAtual;
@@ -107,6 +109,11 @@ class AuthProvider extends ChangeNotifier {
       try {
         // Try to get current user profile with existing token
         _usuarioAtual = await _apiService.getPerfilAtual();
+        if (_usuarioAtual?.ativo == false) {
+          await _clearAuthForInactive(setErrorMessage: false);
+          notifyListeners();
+          return;
+        }
         notifyListeners();
 
         // Conectar SignalR se token válido
@@ -154,6 +161,13 @@ class AuthProvider extends ChangeNotifier {
         );
       }
       
+      if (_usuarioAtual?.ativo == false) {
+        await _clearAuthForInactive(setErrorMessage: true);
+        _isLoading = false;
+        notifyListeners();
+        return false;
+      }
+
       _isAuthenticated = true;
       _isLoading = false;
       notifyListeners();
@@ -511,6 +525,8 @@ class AuthProvider extends ChangeNotifier {
       return 'Esse usuário já está cadastrado.';
     } else if (msg.contains('não encontrado')) {
       return 'Usuário não encontrado.';
+    } else if (msg.toLowerCase().contains('desativ')) {
+      return _inactiveUserMessage;
     } else if (msg.contains('timeout')) {
       return 'Conexão perdida. Tente novamente.';
     }
@@ -522,12 +538,25 @@ class AuthProvider extends ChangeNotifier {
   Future<void> recarregarPerfil() async {
     try {
       _usuarioAtual = await _apiService.getPerfilAtual();
+      if (_usuarioAtual?.ativo == false) {
+        await _clearAuthForInactive(setErrorMessage: true);
+        notifyListeners();
+        return;
+      }
       notifyListeners();
       AppLogger.info('AuthProvider',
           '🔄 Perfil recarregado: apt=${_usuarioAtual?.moradorInfo?.apartamentoId ?? "null"}');
     } catch (e) {
       AppLogger.error('AuthProvider', 'Erro ao recarregar perfil: $e');
     }
+  }
+
+  Future<void> _clearAuthForInactive({required bool setErrorMessage}) async {
+    AppLogger.warning('AuthProvider', 'Usuário desativado. Encerrando sessão.');
+    await _apiService.logout();
+    _usuarioAtual = null;
+    _isAuthenticated = false;
+    _errorMessage = setErrorMessage ? _inactiveUserMessage : null;
   }
 
   /// Clear error message

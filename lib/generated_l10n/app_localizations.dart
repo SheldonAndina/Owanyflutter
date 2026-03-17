@@ -3710,6 +3710,12 @@ abstract class AppLocalizations {
   /// **'Desativar'**
   String get users_deactivate_button;
 
+  /// No description provided for @common_activate.
+  ///
+  /// In pt, this message translates to:
+  /// **'Ativar'**
+  String get common_activate;
+
   /// No description provided for @users_edit_title.
   ///
   /// In pt, this message translates to:

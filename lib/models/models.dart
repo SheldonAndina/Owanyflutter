@@ -1087,6 +1087,32 @@ class HistoricoOcupacao {
     };
   }
 
+  HistoricoOcupacao copyWith({
+    String? id,
+    String? moradorId,
+    String? nomeMorador,
+    String? apartamentoId,
+    String? numeroApartamento,
+    String? blocoApartamento,
+    DateTime? dataEntrada,
+    DateTime? dataSaida,
+    String? motivoSaida,
+    DateTime? criadoEm,
+  }) {
+    return HistoricoOcupacao(
+      id: id ?? this.id,
+      moradorId: moradorId ?? this.moradorId,
+      nomeMorador: nomeMorador ?? this.nomeMorador,
+      apartamentoId: apartamentoId ?? this.apartamentoId,
+      numeroApartamento: numeroApartamento ?? this.numeroApartamento,
+      blocoApartamento: blocoApartamento ?? this.blocoApartamento,
+      dataEntrada: dataEntrada ?? this.dataEntrada,
+      dataSaida: dataSaida ?? this.dataSaida,
+      motivoSaida: motivoSaida ?? this.motivoSaida,
+      criadoEm: criadoEm ?? this.criadoEm,
+    );
+  }
+
   /// Calcula quantos dias o morador ficou/está no apartamento
   int get diasOcupacao {
     final fim = dataSaida ?? DateTime.now();

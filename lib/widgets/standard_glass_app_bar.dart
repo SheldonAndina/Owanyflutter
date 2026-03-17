@@ -40,10 +40,11 @@ class StandardGlassAppBar extends StatelessWidget implements PreferredSizeWidget
   Widget build(BuildContext context) {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -115,6 +116,7 @@ class StandardGlassAppBar extends StatelessWidget implements PreferredSizeWidget
               ),
             ),
           ),
+          ),
         ),
       ),
     );
@@ -165,10 +167,11 @@ class CenteredGlassAppBar extends StatelessWidget implements PreferredSizeWidget
   Widget build(BuildContext context) {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -243,6 +246,7 @@ class CenteredGlassAppBar extends StatelessWidget implements PreferredSizeWidget
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),

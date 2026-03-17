@@ -1,6 +1,6 @@
 {
-    "name": "Owany - Gestão de Condomínios",
-    "short_name": "Owany",
+    "name": "Owany App",
+    "short_name": "Owany App",
     "start_url": ".",
     "scope": ".",
     "display": "standalone",

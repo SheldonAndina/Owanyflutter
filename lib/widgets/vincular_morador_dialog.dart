@@ -27,6 +27,12 @@ class _VincularMoradorDialogState extends State<VincularMoradorDialog> {
   bool _isLoading = false;
   bool _deixarSemMorador = false;
   String _filtroNome = '';
+  String? _errorText;
+
+  String _formatException(dynamic error) {
+    final msg = error.toString();
+    return msg.replaceAll('Exception: ', '').trim();
+  }
 
   @override
   void initState() {
@@ -96,6 +102,7 @@ class _VincularMoradorDialogState extends State<VincularMoradorDialog> {
       // Apenas desvincular, sem vincular novo morador
       setState(() => _isLoading = true);
       try {
+        setState(() => _errorText = null);
         await _desvincularMoradorAtual();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -106,10 +113,14 @@ class _VincularMoradorDialogState extends State<VincularMoradorDialog> {
         }
       } catch (e) {
         AppLogger.error('VincularMorador', 'Erro ao disponibilizar apartamento: $e');
+        final mensagem = _formatException(e);
+        if (mounted) {
+          setState(() => _errorText = mensagem);
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             OwanyTheme.snackBar(
-              'Erro ao disponibilizar apartamento: $e',
+              'Erro ao disponibilizar apartamento: $mensagem',
               type: SnackBarType.error,
             ),
           );
@@ -130,6 +141,7 @@ class _VincularMoradorDialogState extends State<VincularMoradorDialog> {
     setState(() => _isLoading = true);
 
     try {
+      setState(() => _errorText = null);
       await _desvincularMoradorAtual();
 
       // Vincular usuário como morador ao apartamento via MoradoresProvider
@@ -165,8 +177,18 @@ class _VincularMoradorDialogState extends State<VincularMoradorDialog> {
     } catch (e) {
       AppLogger.error('VincularMorador', 'Erro ao vincular: $e');
       if (mounted) {
+        final providerMsg =
+            context.read<MoradoresProvider>().errorMessage;
+        final mensagem =
+            providerMsg != null && providerMsg.isNotEmpty
+                ? providerMsg
+                : _formatException(e);
+        setState(() => _errorText = mensagem);
         ScaffoldMessenger.of(context).showSnackBar(
-          OwanyTheme.snackBar('Erro ao vincular morador: $e', type: SnackBarType.error),
+          OwanyTheme.snackBar(
+            'Erro ao vincular morador: $mensagem',
+            type: SnackBarType.error,
+          ),
         );
       }
     } finally {
@@ -241,268 +263,304 @@ class _VincularMoradorDialogState extends State<VincularMoradorDialog> {
             // Conteúdo
             Padding(
               padding: const EdgeInsets.all(20),
-              child: FutureBuilder<List<Usuario>>(
-                future: _usuariosMorador,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return SizedBox(
-                      height: 200,
-                      child: Center(
-                        child: CircularProgressIndicator(color: OwanyTheme.primaryOrange),
-                      ),
-                    );
-                  }
-
-                  if (snapshot.hasError) {
-                    return Column(
-                      children: [
-                        Icon(Icons.error_outline, size: 48, color: OwanyTheme.error),
-                        SizedBox(height: 12),
-                        Text(
-                          'Erro ao carregar moradores',
-                          style: TextStyle(color: OwanyTheme.error, fontSize: 14),
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          snapshot.error.toString(),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: OwanyTheme.textMutedColor(context), fontSize: 12),
-                        ),
-                      ],
-                    );
-                  }
-
-                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                    return Column(
-                      children: [
-                        Icon(
-                          Icons.people_outline_rounded,
-                          size: 48,
-                          color: OwanyTheme.softOrange,
-                        ),
-                        SizedBox(height: 12),
-                        Text(
-                          'Nenhum usuário morador disponível',
-                          style: TextStyle(
-                            color: OwanyTheme.textPrimary(context),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    );
-                  }
-
-                  final todosOsUsuarios = snapshot.data!;
-                  final usuariosFiltrados = _filtroNome.isEmpty
-                      ? todosOsUsuarios
-                      : todosOsUsuarios
-                          .where((u) =>
-                              u.nome.toLowerCase().contains(_filtroNome.toLowerCase()))
-                          .toList();
-
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Campo de busca
-                      TextField(
-                        onChanged: (value) => setState(() => _filtroNome = value),
-                        decoration: InputDecoration(
-                          hintText: 'Buscar usuário morador por nome...',
-                          prefixIcon: Icon(Icons.search, color: OwanyTheme.primaryOrange),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: BorderSide(color: OwanyTheme.borderColor(context)),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(color: OwanyTheme.primaryOrange),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_errorText != null && _errorText!.isNotEmpty)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: OwanyTheme.error.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: OwanyTheme.error.withValues(alpha: 0.4),
+                          width: 1,
                         ),
                       ),
-
-                      if (usuariosFiltrados.isEmpty && _filtroNome.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 16),
-                          child: Text(
-                            'Nenhum usuário encontrado com "$_filtroNome"',
-                            style: TextStyle(
-                              color: OwanyTheme.textMutedColor(context),
-                              fontSize: 13,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.error_outline, color: OwanyTheme.error),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _errorText!,
+                              style: TextStyle(
+                                color: OwanyTheme.error,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                        )
-                      else ...[
-                        SizedBox(height: 16),
-                        // Lista de usuários
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 280),
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: usuariosFiltrados.length,
-                            itemBuilder: (context, index) {
-                              final usuario = usuariosFiltrados[index];
-                              final isSelected = _usuarioSelecionado?.id == usuario.id;
+                        ],
+                      ),
+                    ),
+                  FutureBuilder<List<Usuario>>(
+                    future: _usuariosMorador,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return SizedBox(
+                          height: 200,
+                          child: Center(
+                            child: CircularProgressIndicator(color: OwanyTheme.primaryOrange),
+                          ),
+                        );
+                      }
 
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 8),
-                                child: Material(
-                                  child: InkWell(
-                                    onTap: () => setState(() {
-                                      _usuarioSelecionado =
-                                          isSelected ? null : usuario;
-                                      _deixarSemMorador = false;
-                                    }),
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: isSelected
-                                            ? OwanyTheme.primaryOrange.withValues(alpha: 0.1)
-                                            : OwanyTheme.background,
-                                        border: Border.all(
-                                          color: isSelected
-                                              ? OwanyTheme.primaryOrange
-                                              : OwanyTheme.borderColor(context),
-                                          width: isSelected ? 2 : 1,
-                                        ),
+                      if (snapshot.hasError) {
+                        return Column(
+                          children: [
+                            Icon(Icons.error_outline, size: 48, color: OwanyTheme.error),
+                            SizedBox(height: 12),
+                            Text(
+                              'Erro ao carregar moradores',
+                              style: TextStyle(color: OwanyTheme.error, fontSize: 14),
+                            ),
+                            SizedBox(height: 12),
+                            Text(
+                              snapshot.error.toString(),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: OwanyTheme.textMutedColor(context), fontSize: 12),
+                            ),
+                          ],
+                        );
+                      }
+
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return Column(
+                          children: [
+                            Icon(
+                              Icons.people_outline_rounded,
+                              size: 48,
+                              color: OwanyTheme.softOrange,
+                            ),
+                            SizedBox(height: 12),
+                            Text(
+                              'Nenhum usuário morador disponível',
+                              style: TextStyle(
+                                color: OwanyTheme.textPrimary(context),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      final todosOsUsuarios = snapshot.data!;
+                      final usuariosFiltrados = _filtroNome.isEmpty
+                          ? todosOsUsuarios
+                          : todosOsUsuarios
+                              .where((u) =>
+                                  u.nome.toLowerCase().contains(_filtroNome.toLowerCase()))
+                              .toList();
+
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Campo de busca
+                          TextField(
+                            onChanged: (value) => setState(() => _filtroNome = value),
+                            decoration: InputDecoration(
+                              hintText: 'Buscar usuário morador por nome...',
+                              prefixIcon: Icon(Icons.search, color: OwanyTheme.primaryOrange),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: BorderSide(color: OwanyTheme.borderColor(context)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10),
+                                borderSide: const BorderSide(color: OwanyTheme.primaryOrange),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                            ),
+                          ),
+
+                          if (usuariosFiltrados.isEmpty && _filtroNome.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 16),
+                              child: Text(
+                                'Nenhum usuário encontrado com "$_filtroNome"',
+                                style: TextStyle(
+                                  color: OwanyTheme.textMutedColor(context),
+                                  fontSize: 13,
+                                ),
+                              ),
+                            )
+                          else ...[
+                            SizedBox(height: 16),
+                            // Lista de usuários
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 280),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: usuariosFiltrados.length,
+                                itemBuilder: (context, index) {
+                                  final usuario = usuariosFiltrados[index];
+                                  final isSelected = _usuarioSelecionado?.id == usuario.id;
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Material(
+                                      child: InkWell(
+                                        onTap: () => setState(() {
+                                          _usuarioSelecionado =
+                                              isSelected ? null : usuario;
+                                          _deixarSemMorador = false;
+                                        }),
                                         borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Row(
-                                        children: [
-                                          Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: BoxDecoration(
-                                              color: OwanyTheme.primaryOrange
-                                                  .withValues(alpha: 0.2),
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? OwanyTheme.primaryOrange.withValues(alpha: 0.1)
+                                                : OwanyTheme.background,
+                                            border: Border.all(
+                                              color: isSelected
+                                                  ? OwanyTheme.primaryOrange
+                                                  : OwanyTheme.borderColor(context),
+                                              width: isSelected ? 2 : 1,
                                             ),
-                                            child: Center(
-                                              child: Text(
-                                                usuario.nome[0].toUpperCase(),
-                                                style: TextStyle(
-                                                  color: OwanyTheme
-                                                      .primaryOrange,
-                                                  fontWeight: FontWeight.w700,
-                                                  fontSize: 16,
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Container(
+                                                width: 40,
+                                                height: 40,
+                                                decoration: BoxDecoration(
+                                                  color: OwanyTheme.primaryOrange
+                                                      .withValues(alpha: 0.2),
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Center(
+                                                  child: Text(
+                                                    usuario.nome[0].toUpperCase(),
+                                                    style: TextStyle(
+                                                      color: OwanyTheme
+                                                          .primaryOrange,
+                                                      fontWeight: FontWeight.w700,
+                                                      fontSize: 16,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
+                                              SizedBox(width: 12),
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(
+                                                      usuario.nome,
+                                                      style: TextStyle(
+                                                        color: OwanyTheme
+                                                            .primaryBrown,
+                                                        fontWeight: FontWeight.w600,
+                                                        fontSize: 14,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                    Text(
+                                                      usuario.nomeLogin,
+                                                      style: TextStyle(
+                                                        color: OwanyTheme.textMutedColor(context),
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              if (isSelected)
+                                                Icon(
+                                                  Icons.check_circle,
+                                                  color: OwanyTheme.primaryOrange,
+                                                  size: 24,
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            SizedBox(height: 16),
+
+                            // Opção: Deixar sem morador
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: OwanyTheme.error.withValues(alpha: 0.1),
+                                border: Border.all(
+                                  color: _deixarSemMorador
+                                      ? OwanyTheme.error
+                                      : OwanyTheme.borderColor(context),
+                                  width: _deixarSemMorador ? 2 : 1,
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: InkWell(
+                                onTap: () => setState(() {
+                                  _deixarSemMorador = !_deixarSemMorador;
+                                  if (_deixarSemMorador) {
+                                    _usuarioSelecionado = null;
+                                  }
+                                }),
+                                borderRadius: BorderRadius.circular(10),
+                                child: Row(
+                                  children: [
+                                    Checkbox(
+                                      value: _deixarSemMorador,
+                                      onChanged: (value) => setState(() {
+                                        _deixarSemMorador = value ?? false;
+                                        if (_deixarSemMorador) {
+                                          _usuarioSelecionado = null;
+                                        }
+                                      }),
+                                      activeColor: OwanyTheme.error,
+                                    ),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Deixar apartamento sem morador',
+                                            style: TextStyle(
+                                              color: OwanyTheme.textPrimary(context),
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
                                             ),
                                           ),
-                                          SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  usuario.nome,
-                                                  style: TextStyle(
-                                                    color: OwanyTheme
-                                                        .primaryBrown,
-                                                    fontWeight: FontWeight.w600,
-                                                    fontSize: 14,
-                                                  ),
-                                                  maxLines: 1,
-                                                  overflow: TextOverflow.ellipsis,
-                                                ),
-                                                Text(
-                                                  usuario.nomeLogin,
-                                                  style: TextStyle(
-                                                    color: OwanyTheme.textMutedColor(context),
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
+                                          Text(
+                                            'Disponibilizar o apartamento',
+                                            style: TextStyle(
+                                              color: OwanyTheme.textMutedColor(context),
+                                              fontSize: 12,
                                             ),
                                           ),
-                                          if (isSelected)
-                                            Icon(
-                                              Icons.check_circle,
-                                              color: OwanyTheme.primaryOrange,
-                                              size: 24,
-                                            ),
                                         ],
                                       ),
                                     ),
-                                  ),
+                                  ],
                                 ),
-                              );
-                            },
-                          ),
-                        ),
-                        SizedBox(height: 16),
-
-                        // Opção: Deixar sem morador
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: OwanyTheme.error.withValues(alpha: 0.1),
-                            border: Border.all(
-                              color: _deixarSemMorador
-                                  ? OwanyTheme.error
-                                  : OwanyTheme.borderColor(context),
-                              width: _deixarSemMorador ? 2 : 1,
+                              ),
                             ),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: InkWell(
-                            onTap: () => setState(() {
-                              _deixarSemMorador = !_deixarSemMorador;
-                              if (_deixarSemMorador) {
-                                _usuarioSelecionado = null;
-                              }
-                            }),
-                            borderRadius: BorderRadius.circular(10),
-                            child: Row(
-                              children: [
-                                Checkbox(
-                                  value: _deixarSemMorador,
-                                  onChanged: (value) => setState(() {
-                                    _deixarSemMorador = value ?? false;
-                                    if (_deixarSemMorador) {
-                                      _usuarioSelecionado = null;
-                                    }
-                                  }),
-                                  activeColor: OwanyTheme.error,
-                                ),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Deixar apartamento sem morador',
-                                        style: TextStyle(
-                                          color: OwanyTheme.textPrimary(context),
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      Text(
-                                        'Disponibilizar o apartamento',
-                                        style: TextStyle(
-                                          color: OwanyTheme.textMutedColor(context),
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  );
-                },
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                ],
               ),
             ),
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:owany_app/theme/owany_theme.dart';
 import 'package:owany_app/providers/auth_provider.dart';
+import 'package:owany_app/providers/agendamentos_provider.dart';
 
 /// ============================================================
 /// APP DRAWER - Widget Premium com Gradiente
@@ -67,19 +68,26 @@ class AppDrawer extends StatelessWidget {
                                 Navigator.pushReplacementNamed(context, '/solicitacoes');
                               },
                             ),
-                          // Agendamentos - Admin, Síndico, Portaria, Morador
-                          if (!authProvider.isVisitante && !authProvider.isFuncionario)
-                            _DrawerItem(
-                              icon: Icons.calendar_month_rounded,
-                              label: authProvider.isMorador ? 'Meus Agendamentos' : 'Agendamentos',
-                              gradient: const LinearGradient(
-                                colors: [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
-                              ),
-                              onTap: () {
-                                Navigator.pop(context);
-                                Navigator.pushReplacementNamed(context, '/agendamentos');
-                              },
-                            ),
+                                    // Agendamentos - Admin, Síndico, Portaria, Morador
+                                    if (!authProvider.isVisitante && !authProvider.isFuncionario)
+                                      Builder(builder: (ctx) {
+                                        final agendProvider = ctx.watch<AgendamentosProvider>();
+                                        final agendPendentes = agendProvider.agendamentos
+                                            .where((a) => a.isPendenteAceitacao)
+                                            .length;
+                                        return _DrawerItem(
+                                          icon: Icons.calendar_month_rounded,
+                                          label: authProvider.isMorador ? 'Meus Agendamentos' : 'Agendamentos',
+                                          gradient: const LinearGradient(
+                                            colors: [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
+                                          ),
+                                          onTap: () {
+                                            Navigator.pop(context);
+                                            Navigator.pushReplacementNamed(context, '/agendamentos');
+                                          },
+                                          badge: agendPendentes > 0 ? (agendPendentes > 9 ? '9+' : '$agendPendentes') : null,
+                                        );
+                                      }),
                         ],
                       ),
                       

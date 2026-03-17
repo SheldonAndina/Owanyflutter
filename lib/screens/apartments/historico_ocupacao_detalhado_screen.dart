@@ -11,6 +11,7 @@ import '../../generated_l10n/app_localizations.dart';
 import '../../providers/historico_ocupacao_provider.dart';
 import '../../providers/apartamentos_provider.dart';
 import '../../models/historico_ocupacao.dart';
+import '../../models/models.dart';
 import '../../theme/owany_theme.dart';
 import '../../widgets/historico_ocupacao_detalhado_card.dart';
 import '../../widgets/primary_button.dart';
@@ -39,6 +40,53 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
+  String _normalizarTexto(String texto) {
+    var t = texto.toLowerCase().trim();
+    t = t
+        .replaceAll('á', 'a')
+        .replaceAll('à', 'a')
+        .replaceAll('ã', 'a')
+        .replaceAll('â', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('ê', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ô', 'o')
+        .replaceAll('õ', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ç', 'c');
+    return t;
+  }
+
+  bool _isEntradaEvento(HistoricoOcupacaoResumo evento) {
+    final tipo = _normalizarTexto(evento.tipoMovimentacao);
+    if (tipo == 'entrada') return true;
+    if (tipo == 'transferencia') {
+      if (evento.apartamentoDestinoId != null && evento.apartamentoDestinoId!.isNotEmpty) {
+        return evento.apartamentoDestinoId == evento.apartamentoId;
+      }
+      if (evento.numeroApartamentoDestino != null && evento.numeroApartamentoDestino!.isNotEmpty) {
+        return evento.numeroApartamentoDestino == evento.numeroApartamento;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool _isSaidaEvento(HistoricoOcupacaoResumo evento) {
+    final tipo = _normalizarTexto(evento.tipoMovimentacao);
+    if (tipo == 'saida') return true;
+    if (tipo == 'transferencia') {
+      if (evento.apartamentoOrigemId != null && evento.apartamentoOrigemId!.isNotEmpty) {
+        return evento.apartamentoOrigemId == evento.apartamentoId;
+      }
+      if (evento.numeroApartamentoOrigem != null && evento.numeroApartamentoOrigem!.isNotEmpty) {
+        return evento.numeroApartamentoOrigem == evento.numeroApartamento;
+      }
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -58,6 +106,11 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
     final provider = context.read<HistoricoOcupacaoProvider>();
 
     if (widget.apartamentoId != null) {
+      try {
+        await context
+            .read<ApartamentosProvider>()
+            .carregarApartamento(widget.apartamentoId!);
+      } catch (_) {}
       await provider.carregarHistoricoDetalhadoApartamento(widget.apartamentoId!);
     } else if (widget.moradorId != null) {
       await provider.carregarHistoricoDetalhadoMorador(widget.moradorId!);
@@ -308,8 +361,8 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
   }
 
   Widget _buildMoradoresAtuaisTab() {
-    return Consumer<HistoricoOcupacaoProvider>(
-      builder: (context, provider, _) {
+    return Consumer2<HistoricoOcupacaoProvider, ApartamentosProvider>(
+      builder: (context, provider, apartamentosProvider, _) {
         if (provider.isLoading) {
           return Center(child: CircularProgressIndicator(color: OwanyTheme.primaryOrange));
         }
@@ -318,9 +371,42 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
           return _buildErrorState(provider.errorMessage!);
         }
 
+        final apartamentoAtual = widget.apartamentoId != null
+            ? apartamentosProvider.apartamentoAtual
+            : null;
+        final moradoresAtuais = (apartamentoAtual != null &&
+                apartamentoAtual.id == widget.apartamentoId)
+            ? (apartamentoAtual.moradores ?? const <Morador>[])
+            : const <Morador>[];
         final historicosAtivos = provider.historicosAtivos;
+        final idsMoradoresAtuais =
+            moradoresAtuais.map((m) => m.id).where((id) => id.isNotEmpty).toSet();
+        final historicosAtivosFiltrados = idsMoradoresAtuais.isNotEmpty
+            ? historicosAtivos
+                .where((h) => idsMoradoresAtuais.contains(h.moradorId))
+                .toList()
+            : historicosAtivos;
+        final historicosPorMorador = <String, HistoricoOcupacao>{};
+        for (final h in historicosAtivosFiltrados) {
+          if (h.moradorId.isNotEmpty) historicosPorMorador[h.moradorId] = h;
+        }
+        if (historicosPorMorador.isEmpty && moradoresAtuais.isNotEmpty) {
+          for (final h in provider.historicosFiltrados) {
+            if (h.moradorId.isEmpty) continue;
+            if (idsMoradoresAtuais.contains(h.moradorId)) {
+              historicosPorMorador[h.moradorId] = h;
+            }
+          }
+        }
+        final historicosPorNome = <String, HistoricoOcupacao>{};
+        for (final h in historicosAtivosFiltrados) {
+          if (h.nomeMorador.trim().isEmpty) continue;
+          historicosPorNome[_normalizarTexto(h.nomeMorador)] = h;
+        }
         
-        if (historicosAtivos.isEmpty) {
+        if (widget.apartamentoId != null &&
+            moradoresAtuais.isEmpty &&
+            historicosAtivosFiltrados.isEmpty) {
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(32),
@@ -357,19 +443,128 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
             ),
           );
         }
+        if (widget.apartamentoId != null &&
+            historicosAtivosFiltrados.isEmpty &&
+            moradoresAtuais.isNotEmpty) {
+          return Column(
+            children: [
+              _buildFilterRow(provider),
+            Expanded(
+              child: _buildMoradoresAtuaisList(
+                moradoresAtuais,
+                historicosPorMorador: historicosPorMorador,
+                historicosPorNome: historicosPorNome,
+              ),
+            ),
+          ],
+        );
+        }
         return Column(
           children: [
             _buildFilterRow(provider),
-            Expanded(child: _buildHistoricosList(historicosAtivos, mostrarAtivos: true)),
+            Expanded(
+              child: _buildHistoricosList(
+                historicosAtivosFiltrados,
+                mostrarAtivos: true,
+              ),
+            ),
           ],
         );
       },
     );
   }
 
+  Widget _buildMoradoresAtuaisList(
+    List<Morador> moradores, {
+    required Map<String, HistoricoOcupacao> historicosPorMorador,
+    required Map<String, HistoricoOcupacao> historicosPorNome,
+  }) {
+    return RefreshIndicator(
+      color: OwanyTheme.primaryOrange,
+      onRefresh: _carregarHistorico,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: moradores.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          final morador = moradores[index];
+          HistoricoOcupacao? historico = historicosPorMorador[morador.id];
+          if (historico == null) {
+            final nomeKey = morador.nome.trim().isNotEmpty
+                ? _normalizarTexto(morador.nome)
+                : (morador.nomeUsuario?.trim().isNotEmpty ?? false)
+                    ? _normalizarTexto(morador.nomeUsuario!)
+                    : '';
+            if (nomeKey.isNotEmpty) {
+              historico = historicosPorNome[nomeKey];
+            }
+          }
+          final nome = morador.nome.trim().isNotEmpty
+              ? morador.nome.trim()
+              : (morador.nomeUsuario?.trim().isNotEmpty ?? false)
+                  ? morador.nomeUsuario!.trim()
+                  : (historico != null && historico.nomeMorador.trim().isNotEmpty)
+                      ? historico.nomeMorador.trim()
+                      : AppLocalizations.of(context)!.common_resident;
+          final dataEntradaReal = morador.dataEntrada ?? historico?.dataEntrada;
+          final dataEntrada = dataEntradaReal != null
+              ? DateFormat('dd/MM/yyyy').format(dataEntradaReal)
+              : null;
+          return Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: OwanyTheme.cardColor(context),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: OwanyTheme.borderColor(context)),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: OwanyTheme.info.withValues(alpha: 0.15),
+                  child: Text(
+                    nome.isNotEmpty ? nome[0].toUpperCase() : '?',
+                    style: TextStyle(
+                      color: OwanyTheme.info,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        nome,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: OwanyTheme.textPrimary(context),
+                        ),
+                      ),
+                      if (dataEntrada != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '${AppLocalizations.of(context)!.morador_since_date(dataEntrada)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: OwanyTheme.textMutedColor(context),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildHistoricoCompletoTab() {
-    return Consumer<HistoricoOcupacaoProvider>(
-      builder: (context, provider, _) {
+    return Consumer2<HistoricoOcupacaoProvider, ApartamentosProvider>(
+      builder: (context, provider, apartamentosProvider, _) {
         if (provider.isLoading) {
           return Center(
             child: Column(
@@ -395,41 +590,25 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
 
         final todoHistorico = provider.eventosFiltrados;
         final resumoHistorico = provider.historicosFiltrados;
-        
-        if (todoHistorico.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.history_rounded,
-                    size: 64,
-                    color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.4),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Nenhum histórico encontrado',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: OwanyTheme.textMutedColor(context),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'O histórico de ocupação aparecerá aqui',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.7),
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-          );
+        final apartamentoAtual = widget.apartamentoId != null
+            ? apartamentosProvider.apartamentoAtual
+            : null;
+        final moradoresAtuais = (apartamentoAtual != null &&
+                apartamentoAtual.id == widget.apartamentoId)
+            ? (apartamentoAtual.moradores ?? const <Morador>[])
+            : const <Morador>[];
+        final moradoresPorId = <String, Morador>{};
+        for (final m in moradoresAtuais) {
+          if (m.id.isNotEmpty) moradoresPorId[m.id] = m;
+        }
+        final moradorUnicoAtual = moradoresAtuais.length == 1 ? moradoresAtuais.first : null;
+        final nomesPorMoradorId = <String, String>{};
+        for (final h in resumoHistorico) {
+          if (h is HistoricoOcupacao &&
+              h.moradorId.isNotEmpty &&
+              h.nomeMorador.trim().isNotEmpty) {
+            nomesPorMoradorId[h.moradorId] = h.nomeMorador.trim();
+          }
         }
         
         if (todoHistorico.isEmpty) {
@@ -467,17 +646,113 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
             ),
           );
         }
+        
+        if (todoHistorico.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.history_rounded,
+                    size: 64,
+                    color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.4),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Nenhum histórico encontrado',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: OwanyTheme.textMutedColor(context),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'O histórico de ocupação aparecerá aqui',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.7),
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        final historicosBase = resumoHistorico.whereType<HistoricoOcupacao>().toList();
+        final latestByKey = <String, HistoricoOcupacaoResumo>{};
+        for (final evento in todoHistorico) {
+          if (evento.moradorId.trim().isEmpty && evento.nomeMorador.trim().isEmpty) {
+            continue;
+          }
+          final key = evento.moradorId.trim().isNotEmpty
+              ? evento.moradorId.trim()
+              : _normalizarTexto(evento.nomeMorador);
+          final existente = latestByKey[key];
+          if (existente == null || evento.dataMovimentacao.isAfter(existente.dataMovimentacao)) {
+            latestByKey[key] = evento;
+          }
+        }
+
+        int ativosOverride = 0;
+        for (final historico in historicosBase) {
+          final key = historico.moradorId.trim().isNotEmpty
+              ? historico.moradorId.trim()
+              : _normalizarTexto(historico.nomeMorador);
+          final ultimoEvento = latestByKey[key];
+          final ativo = ultimoEvento != null ? _isEntradaEvento(ultimoEvento) && !_isSaidaEvento(ultimoEvento) : historico.estaAtivo;
+          if (ativo) ativosOverride++;
+        }
+
+        final totalOverride = historicosBase.length;
+        final inativosOverride = totalOverride - ativosOverride;
+        final diasTotais = historicosBase
+            .where((h) => !h.estaAtivo)
+            .fold<int>(0, (sum, h) => sum + h.diasOcupacao);
+        final inativosParaMedia =
+            historicosBase.where((h) => !h.estaAtivo).length;
+        final mediaOverride = inativosParaMedia > 0
+            ? (diasTotais / inativosParaMedia).round()
+            : 0;
+
         return Column(
           children: [
             _buildFilterRow(provider),
-            Expanded(child: _buildEventosList(todoHistorico, mostrarAtivos: false, resumoHistorico: resumoHistorico)),
+            Expanded(
+              child: _buildEventosList(
+                todoHistorico,
+                mostrarAtivos: false,
+                resumoHistorico: resumoHistorico,
+                moradoresPorId: moradoresPorId,
+                nomesPorMoradorId: nomesPorMoradorId,
+                moradorUnicoAtual: moradorUnicoAtual,
+                totalOverride: totalOverride,
+                ativosOverride: ativosOverride,
+                inativosOverride: inativosOverride,
+                mediaOverride: mediaOverride,
+              ),
+            ),
           ],
         );
       },
     );
   }
 
-  Widget _buildEventosList(List historicos, {required bool mostrarAtivos, List? resumoHistorico}) {
+  Widget _buildEventosList(
+    List historicos, {
+    required bool mostrarAtivos,
+    List? resumoHistorico,
+    Map<String, Morador>? moradoresPorId,
+    Map<String, String>? nomesPorMoradorId,
+    Morador? moradorUnicoAtual,
+    int? totalOverride,
+    int? ativosOverride,
+    int? inativosOverride,
+    int? mediaOverride,
+  }) {
     if (historicos.isEmpty) {
       return _buildEmptyState(
         mostrarAtivos
@@ -497,14 +772,27 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
           children: [
             if (!mostrarAtivos && resumoHistorico != null && resumoHistorico.isNotEmpty) ...[
               _buildTimelineChart(resumoHistorico),
-              _buildEstatisticas(),
+              _buildEstatisticas(
+                totalOverride: totalOverride,
+                ativosOverride: ativosOverride,
+                inativosOverride: inativosOverride,
+                mediaOverride: mediaOverride,
+              ),
               SizedBox(height: 8),
             ],
             ...List.generate(historicos.length, (index) {
               final h = historicos[index];
               // Se for HistoricoOcupacaoResumo (eventos detalhados), mostrar de forma diferente
               if (h is HistoricoOcupacaoResumo) {
-                return Padding(padding: const EdgeInsets.only(bottom: 12), child: _buildEventoCard(h));
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _buildEventoCard(
+                    h,
+                    moradorOverride: moradoresPorId?[h.moradorId],
+                    moradorUnicoAtual: moradorUnicoAtual,
+                    nomeFallback: nomesPorMoradorId?[h.moradorId],
+                  ),
+                );
               }
               // Se for HistoricoOcupacao (resumo agregado)
               return Padding(
@@ -518,7 +806,29 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
     );
   }
 
-  Widget _buildEventoCard(HistoricoOcupacaoResumo evento) {
+  Widget _buildEventoCard(
+    HistoricoOcupacaoResumo evento, {
+    Morador? moradorOverride,
+    Morador? moradorUnicoAtual,
+    String? nomeFallback,
+  }) {
+    final nomeEventoValido =
+        evento.nomeMorador.isNotEmpty && evento.nomeMorador.toLowerCase().trim() != 'residente';
+    final nomeResolvido = nomeEventoValido
+        ? evento.nomeMorador
+        : (moradorOverride != null && moradorOverride.nome.trim().isNotEmpty)
+            ? moradorOverride.nome.trim()
+            : (moradorOverride != null &&
+                    (moradorOverride.nomeUsuario?.trim().isNotEmpty ?? false))
+                ? moradorOverride.nomeUsuario!.trim()
+                : (moradorUnicoAtual != null && moradorUnicoAtual.nome.trim().isNotEmpty)
+                    ? moradorUnicoAtual.nome.trim()
+                    : (moradorUnicoAtual != null &&
+                            (moradorUnicoAtual.nomeUsuario?.trim().isNotEmpty ?? false))
+                        ? moradorUnicoAtual.nomeUsuario!.trim()
+                : (nomeFallback != null && nomeFallback.trim().isNotEmpty)
+                    ? nomeFallback.trim()
+                : AppLocalizations.of(context)!.apartments_no_residents;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -560,9 +870,7 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
               SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  evento.nomeMorador.isNotEmpty
-                      ? evento.nomeMorador
-                      : AppLocalizations.of(context)!.apartments_no_residents,
+                  nomeResolvido,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: OwanyTheme.textPrimary(context)),
                 ),
               ),
@@ -710,9 +1018,18 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
     );
   }
 
-  Widget _buildEstatisticas() {
+  Widget _buildEstatisticas({
+    int? totalOverride,
+    int? ativosOverride,
+    int? inativosOverride,
+    int? mediaOverride,
+  }) {
     final provider = context.watch<HistoricoOcupacaoProvider>();
     final stats = provider.estatisticas;
+    final total = totalOverride ?? stats['total'];
+    final ativos = ativosOverride ?? stats['ativos'];
+    final inativos = inativosOverride ?? stats['inativos'];
+    final media = mediaOverride ?? stats['mediaOcupacao'];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -741,20 +1058,20 @@ class _HistoricoOcupacaoDetalhadoScreenState extends State<HistoricoOcupacaoDeta
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildStatItem(AppLocalizations.of(context)!.common_total, '${stats['total']}', Icons.people_rounded),
+              _buildStatItem(AppLocalizations.of(context)!.common_total, '$total', Icons.people_rounded),
               _buildStatItem(
                 AppLocalizations.of(context)!.history_active,
-                '${stats['ativos']}',
+                '$ativos',
                 Icons.check_circle_rounded,
               ),
               _buildStatItem(
                 AppLocalizations.of(context)!.history_previous,
-                '${stats['inativos']}',
+                '$inativos',
                 Icons.history_rounded,
               ),
               _buildStatItem(
                 AppLocalizations.of(context)!.history_average,
-                '${stats['mediaOcupacao']}d',
+                '${media}d',
                 Icons.timer_rounded,
               ),
             ],

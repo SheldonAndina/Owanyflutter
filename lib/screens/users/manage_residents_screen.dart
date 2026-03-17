@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../generated_l10n/app_localizations.dart';
 import '../../theme/owany_theme.dart';
@@ -41,9 +42,22 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
   final _searchFocus = FocusNode();
   String _query      = '';
   String? _filtroApt;
-  double _scrollOffset = 0;
-
+  final _scrollOffset = ValueNotifier<double>(0);
   final _scrollCtrl = ScrollController();
+  List<Map<String, dynamic>>? _combinedCache;
+  int _combinedMoradoresLen = -1;
+  String? _combinedMoradoresFirstId;
+  String? _combinedMoradoresLastId;
+  int _combinedUsuariosLen = -1;
+  String? _combinedUsuariosFirstId;
+  String? _combinedUsuariosLastId;
+  int _combinedAptLen = -1;
+  String? _combinedAptFirstId;
+  String? _combinedAptLastId;
+  List<Map<String, dynamic>>? _filteredCache;
+  String _cachedQuery = '';
+  String? _cachedFiltroApt;
+  List<Map<String, dynamic>>? _cachedCombinedRef;
 
   // ── animations ─────────────────────────────────────────────────────────────
   late AnimationController _introCtrl;
@@ -75,7 +89,7 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
         .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
     _searchFocus.addListener(() => setState(() => _searchFocused = _searchFocus.hasFocus));
-    _scrollCtrl.addListener(() => setState(() => _scrollOffset = _scrollCtrl.offset));
+    _scrollCtrl.addListener(() => _scrollOffset.value = _scrollCtrl.offset);
 
     Future.microtask(() async {
       await Future.wait([
@@ -92,6 +106,7 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
     _searchCtrl.dispose();
     _searchFocus.dispose();
     _scrollCtrl.dispose();
+    _scrollOffset.dispose();
     _introCtrl.dispose();
     _shimmerCtrl.dispose();
     _pulseCtrl.dispose();
@@ -105,6 +120,65 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
     return p.length >= 2
         ? '${p.first[0]}${p.last[0]}'.toUpperCase()
         : (name.isNotEmpty ? name[0].toUpperCase() : '?');
+  }
+
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
+  }
+
+  List<Map<String, dynamic>> _buildCombined(
+    MoradoresProvider moradoresProv,
+    UsuariosProvider usuariosProv,
+    ApartamentosProvider aptProv,
+  ) {
+    final moradores = moradoresProv.moradores;
+    final usuarios = usuariosProv.usuarios;
+    final apartamentos = aptProv.apartamentos;
+
+    final mLen = moradores.length;
+    final mFirst = mLen > 0 ? moradores.first.id : null;
+    final mLast = mLen > 0 ? moradores.last.id : null;
+    final uLen = usuarios.length;
+    final uFirst = uLen > 0 ? usuarios.first.id : null;
+    final uLast = uLen > 0 ? usuarios.last.id : null;
+    final aLen = apartamentos.length;
+    final aFirst = aLen > 0 ? apartamentos.first.id : null;
+    final aLast = aLen > 0 ? apartamentos.last.id : null;
+
+    final canUseCache =
+        _combinedCache != null &&
+        _combinedMoradoresLen == mLen &&
+        _combinedMoradoresFirstId == mFirst &&
+        _combinedMoradoresLastId == mLast &&
+        _combinedUsuariosLen == uLen &&
+        _combinedUsuariosFirstId == uFirst &&
+        _combinedUsuariosLastId == uLast &&
+        _combinedAptLen == aLen &&
+        _combinedAptFirstId == aFirst &&
+        _combinedAptLastId == aLast;
+    if (canUseCache) return _combinedCache!;
+
+    final usuarioById = {for (final u in usuarios) u.id: u};
+    final aptById = {for (final a in apartamentos) a.id: a};
+
+    final combined = moradores.map((m) {
+      final usuario = m.usuarioId != null ? usuarioById[m.usuarioId] : null;
+      final apt = m.apartamentoId != null ? aptById[m.apartamentoId] : null;
+      return {'morador': m, 'usuario': usuario, 'apartamento': apt};
+    }).toList();
+
+    _combinedCache = combined;
+    _combinedMoradoresLen = mLen;
+    _combinedMoradoresFirstId = mFirst;
+    _combinedMoradoresLastId = mLast;
+    _combinedUsuariosLen = uLen;
+    _combinedUsuariosFirstId = uFirst;
+    _combinedUsuariosLastId = uLast;
+    _combinedAptLen = aLen;
+    _combinedAptFirstId = aFirst;
+    _combinedAptLastId = aLast;
+
+    return combined;
   }
 
   // ==========================================================================
@@ -121,9 +195,12 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(116),
-        child: _GlassAppBar(
-          scrollOffset: _scrollOffset,
-          shimmerAnim: _shimmerAnim,
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) => _GlassAppBar(
+            scrollOffset: value,
+            shimmerAnim: _shimmerAnim,
+          ),
         ),
       ),
       // Morador é criado ao cadastrar um usuário — botão removido
@@ -136,36 +213,38 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
           if (loading) return const _ShimmerLoader();
 
           // ── Combine data ──
-          final combined = moradoresProv.moradores.map((m) {
-            final usuario = m.usuarioId != null
-                ? usuariosProv.usuarios
-                    .cast<dynamic>()
-                    .firstWhere((u) => u.id == m.usuarioId, orElse: () => null)
-                : null;
-            final apt = m.apartamentoId != null
-                ? aptProv.apartamentos
-                    .cast<dynamic>()
-                    .firstWhere((a) => a.id == m.apartamentoId, orElse: () => null)
-                : null;
-            return {'morador': m, 'usuario': usuario, 'apartamento': apt};
-          }).toList();
+          final combined = _buildCombined(moradoresProv, usuariosProv, aptProv);
 
           // ── Filter ──
-          final filtered = combined.where((item) {
-            final m   = item['morador'] as dynamic;
-            final u   = item['usuario'];
-            final apt = item['apartamento'];
-            if (_filtroApt != null && m.apartamentoId != _filtroApt) return false;
-            if (_query.isNotEmpty) {
-              final q = _query.toLowerCase();
-              return m.nome.toLowerCase().contains(q) ||
-                  (u?.telefone?.toLowerCase().contains(q) ?? false) ||
-                  (apt?.nome?.toLowerCase().contains(q) ?? false) ||
-                  (apt?.numero?.toLowerCase().contains(q) ?? false) ||
-                  (apt?.bloco?.toLowerCase().contains(q) ?? false);
-            }
-            return true;
-          }).toList();
+          final canUseFiltered =
+              identical(_cachedCombinedRef, combined) &&
+              _cachedQuery == _query &&
+              _cachedFiltroApt == _filtroApt &&
+              _filteredCache != null;
+          final filtered = canUseFiltered
+              ? _filteredCache!
+              : combined.where((item) {
+                  final m   = item['morador'] as dynamic;
+                  final u   = item['usuario'];
+                  final apt = item['apartamento'];
+                  if (_filtroApt != null && m.apartamentoId != _filtroApt) return false;
+                  if (_query.isNotEmpty) {
+                    final q = _query.toLowerCase();
+                    return m.nome.toLowerCase().contains(q) ||
+                        (u?.telefone?.toLowerCase().contains(q) ?? false) ||
+                        (apt?.nome?.toLowerCase().contains(q) ?? false) ||
+                        (apt?.numero?.toLowerCase().contains(q) ?? false) ||
+                        (apt?.bloco?.toLowerCase().contains(q) ?? false);
+                  }
+                  return true;
+                }).toList();
+
+          if (!canUseFiltered) {
+            _cachedCombinedRef = combined;
+            _cachedQuery = _query;
+            _cachedFiltroApt = _filtroApt;
+            _filteredCache = filtered;
+          }
 
           // ── Sort flat list by apt block/number, then proprietario first, then name ──
           filtered.sort((a, b) {
@@ -194,7 +273,8 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
           final comConta    = combined.where((i) => i['usuario'] != null).length;
           final semConta    = total - comConta;
 
-          return RefreshIndicator(
+            final isPortaria = context.read<AuthProvider>().isPortaria;
+            return RefreshIndicator(
             color: OwanyTheme.primaryOrange,
             backgroundColor: OwanyTheme.cardColor(context),
             strokeWidth: 3,
@@ -214,27 +294,28 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
                 // ── AppBar clearance ──
                 const SliverToBoxAdapter(child: SizedBox(height: 136)),
 
-                // ── Dashboard ──
-                SliverToBoxAdapter(
-                  child: FadeTransition(
-                    opacity: _introFade,
-                    child: SlideTransition(
-                      position: _introSlide,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-                        child: _Dashboard(
-                          total: total,
-                          proprietarios: proprietarios,
-                          comConta: comConta,
-                          semConta: semConta,
-                          pulseAnim: _pulseAnim,
+                  // ── Dashboard ──
+                  if (!isPortaria) ...[
+                    SliverToBoxAdapter(
+                      child: FadeTransition(
+                        opacity: _introFade,
+                        child: SlideTransition(
+                          position: _introSlide,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                            child: _Dashboard(
+                              total: total,
+                              proprietarios: proprietarios,
+                              comConta: comConta,
+                              semConta: semConta,
+                              pulseAnim: _pulseAnim,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-
-                const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                    const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                  ],
 
                 // ── Search + filter panel ──
                 SliverToBoxAdapter(
@@ -249,14 +330,24 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
                       apartamentos: aptProv.apartamentos,
                       totalFiltrado: filtered.length,
                       totalGeral: total,
-                      onQueryChanged: (v) => setState(() => _query = v.toLowerCase()),
+                      onQueryChanged: (v) {
+                        _query = v.toLowerCase();
+                        _invalidateFilteredCache();
+                        setState(() {});
+                      },
                       onClear: () {
                         _searchCtrl.clear();
+                        _invalidateFilteredCache();
                         setState(() => _query = '');
                       },
-                      onAptFilter: (id) => setState(() =>
-                          _filtroApt = _filtroApt == id ? null : id),
-                      onClearApt: () => setState(() => _filtroApt = null),
+                      onAptFilter: (id) => setState(() {
+                        _filtroApt = _filtroApt == id ? null : id;
+                        _invalidateFilteredCache();
+                      }),
+                      onClearApt: () => setState(() {
+                        _filtroApt = null;
+                        _invalidateFilteredCache();
+                      }),
                     ),
                   ),
                 ),
@@ -280,27 +371,31 @@ class _ManageResidentsScreenState extends State<ManageResidentsScreen>
                           final m    = item['morador'] as dynamic;
                           final u    = item['usuario'];
                           final apt  = item['apartamento'];
-                          return TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0.0, end: 1.0),
-                            duration: Duration(milliseconds: 280 + (i * 55).clamp(0, 500)),
-                            curve: Curves.easeOutCubic,
-                            builder: (_, v, child) => Transform.translate(
-                              offset: Offset(0, 24 * (1 - v)),
-                              child: Opacity(opacity: v.clamp(0.0, 1.0), child: child),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: _MoradorCard(
-                                morador: m,
-                                usuario: u,
-                                apartamento: apt,
-                                onTap: () => Navigator.pushNamed(
-                                  context, '/moradores-detalhe', arguments: m.id as String),
-                                initials: _initials,
+                            final isPortaria =
+                                context.read<AuthProvider>().isPortaria;
+                            return TweenAnimationBuilder<double>(
+                              tween: Tween(begin: 0.0, end: 1.0),
+                              duration: Duration(milliseconds: 280 + (i * 55).clamp(0, 500)),
+                              curve: Curves.easeOutCubic,
+                              builder: (_, v, child) => Transform.translate(
+                                offset: Offset(0, 24 * (1 - v)),
+                                child: Opacity(opacity: v.clamp(0.0, 1.0), child: child),
                               ),
-                            ),
-                          );
-                        },
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                  child: _MoradorCard(
+                                    morador: m,
+                                    usuario: u,
+                                    apartamento: apt,
+                                    onTap: () => Navigator.pushNamed(
+                                      context, '/moradores-detalhe', arguments: m.id as String),
+                                    initials: _initials,
+                                    showEditAction: !isPortaria,
+                                    minimalInfo: isPortaria,
+                                  ),
+                                ),
+                              );
+                          },
                         childCount: filtered.length,
                       ),
                     ),
@@ -331,12 +426,13 @@ class _GlassAppBar extends StatelessWidget {
     final l    = AppLocalizations.of(context)!;
     final prog = (scrollOffset / 120).clamp(0.0, 1.0);
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: AnimatedBuilder(
-          animation: shimmerAnim,
-          builder: (_, __) => Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: AnimatedBuilder(
+            animation: shimmerAnim,
+            builder: (_, __) => Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -429,6 +525,7 @@ class _GlassAppBar extends StatelessWidget {
                   ],
                 ),
               ),
+            ),
             ),
           ),
         ),
@@ -1044,6 +1141,8 @@ class _MoradorCard extends StatefulWidget {
   final dynamic apartamento;
   final VoidCallback onTap;
   final String Function(String) initials;
+  final bool showEditAction;
+  final bool minimalInfo;
 
   const _MoradorCard({
     required this.morador,
@@ -1051,6 +1150,8 @@ class _MoradorCard extends StatefulWidget {
     this.apartamento,
     required this.onTap,
     required this.initials,
+    this.showEditAction = true,
+    this.minimalInfo = false,
   });
 
   @override
@@ -1059,6 +1160,51 @@ class _MoradorCard extends StatefulWidget {
 
 class _MoradorCardState extends State<_MoradorCard> {
   bool _pressed = false;
+
+  Future<void> _callPhone(String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Não foi possível iniciar a chamada')),
+    );
+  }
+
+  String? _resolvePhone(dynamic usuario, dynamic morador) {
+    String? phone;
+    if (usuario != null) {
+      try {
+        final v = (usuario is Map)
+            ? usuario['telefone']
+            : (usuario as dynamic).telefone;
+        phone = v?.toString();
+      } catch (_) {}
+    }
+    if (phone == null || phone.trim().isEmpty) {
+      try {
+        if (morador is Map) {
+          phone = (morador['telefone'] ??
+                  morador['telefoneMorador'] ??
+                  morador['telefoneCompleto'])
+              ?.toString();
+        } else {
+          try {
+            phone = (morador as dynamic).telefone?.toString();
+          } catch (_) {}
+          if (phone == null || phone.trim().isEmpty) {
+            try {
+              phone = (morador as dynamic).telefoneMorador?.toString();
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
+    final cleaned = phone?.trim();
+    return (cleaned == null || cleaned.isEmpty) ? null : cleaned;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1069,6 +1215,8 @@ class _MoradorCardState extends State<_MoradorCard> {
     final isProp      = m.proprietario == true;
     final accentColor = isProp ? OwanyTheme.warning : OwanyTheme.info;
     final noAccount   = u == null;
+    final isMinimal   = widget.minimalInfo;
+    final phone       = _resolvePhone(u, m);
 
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
@@ -1110,13 +1258,13 @@ class _MoradorCardState extends State<_MoradorCard> {
             child: Row(
               children: [
 
-                // ── Gradient avatar ──
+                // ── Gradient avatar ── (compact)
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
                     Container(
-                      width: 50,
-                      height: 50,
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
                           begin: Alignment.topLeft,
@@ -1140,7 +1288,7 @@ class _MoradorCardState extends State<_MoradorCard> {
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w900,
-                          fontSize: 16,
+                          fontSize: 14,
                         ),
                       ),
                     ),
@@ -1167,7 +1315,7 @@ class _MoradorCardState extends State<_MoradorCard> {
                   ],
                 ),
 
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
 
                 // ── Info ──
                 Expanded(
@@ -1176,30 +1324,34 @@ class _MoradorCardState extends State<_MoradorCard> {
                     children: [
 
                       // Name + role badge
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Expanded(
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 240),
                             child: Text(
                               m.nome as String,
                               style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                fontSize: 15,
+                                fontSize: 14,
                                 color: OwanyTheme.textPrimary(context),
                                 letterSpacing: -0.3,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          _RoleBadge(
-                            label: isProp
-                                ? l.residents_owner_full
-                                : l.residents_tenant,
-                            color: accentColor,
-                            icon: isProp
-                                ? Icons.star_rounded
-                                : Icons.person_rounded,
-                          ),
+                          if (!isMinimal)
+                            _RoleBadge(
+                              label: isProp
+                                  ? l.residents_owner_full
+                                  : l.residents_tenant,
+                              color: accentColor,
+                              icon: isProp
+                                  ? Icons.star_rounded
+                                  : Icons.person_rounded,
+                            ),
                         ],
                       ),
 
@@ -1261,56 +1413,91 @@ class _MoradorCardState extends State<_MoradorCard> {
                       const SizedBox(height: 8),
 
                       // Detail chips
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 6,
-                        children: [
-                          if (u?.telefone != null &&
-                              (u.telefone as String).isNotEmpty)
-                            _DetailChip(
-                              icon: Icons.phone_rounded,
-                              label: u.telefone as String,
-                              color: OwanyTheme.success,
-                            ),
-                          if (u?.nomeLogin != null &&
-                              (u.nomeLogin as String).isNotEmpty)
-                            _DetailChip(
-                              icon: Icons.alternate_email_rounded,
-                              label: u.nomeLogin as String,
-                              color: OwanyTheme.info,
-                            ),
-                          if (m.dataEntrada != null)
-                            _DetailChip(
-                              icon: Icons.calendar_today_rounded,
-                              label: l.morador_since_date(
-                                  DateFormat('dd/MM/yy').format(m.dataEntrada!)),
-                              color: OwanyTheme.textMuted,
-                            ),
-                          if (noAccount)
-                            _DetailChip(
-                              icon: Icons.person_off_outlined,
-                              label: l.residents_no_account,
-                              color: OwanyTheme.error,
-                              filled: true,
-                            ),
-                        ],
-                      ),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 6,
+                          children: [
+                            if (phone != null)
+                              _DetailChip(
+                                icon: Icons.phone_rounded,
+                                label: phone,
+                                color: OwanyTheme.success,
+                              ),
+                            if (!isMinimal) ...[
+                              if (u?.nomeLogin != null &&
+                                  (u.nomeLogin as String).isNotEmpty)
+                                _DetailChip(
+                                  icon: Icons.alternate_email_rounded,
+                                  label: u.nomeLogin as String,
+                                  color: OwanyTheme.info,
+                                ),
+                              if (m.dataEntrada != null)
+                                _DetailChip(
+                                  icon: Icons.calendar_today_rounded,
+                                  label: l.morador_since_date(
+                                      DateFormat('dd/MM/yy').format(m.dataEntrada!)),
+                                  color: OwanyTheme.textMuted,
+                                ),
+                              if (noAccount)
+                                _DetailChip(
+                                  icon: Icons.person_off_outlined,
+                                  label: l.residents_no_account,
+                                  color: OwanyTheme.error,
+                                  filled: true,
+                                ),
+                            ],
+                          ],
+                        ),
                     ],
                   ),
                 ),
 
                 const SizedBox(width: 8),
 
-                // ── Chevron circle ──
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: accentColor.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
+                // ── Quick actions (compact) ──
+                SizedBox(
+                  width: 56,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                        SizedBox(
+                          height: 28,
+                          width: 28,
+                          child: IconButton(
+                            padding: EdgeInsets.zero,
+                            iconSize: 18,
+                            splashRadius: 18,
+                            onPressed: () {
+                              if (phone != null) {
+                                _callPhone(phone);
+                              } else {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Telefone não cadastrado')),
+                                );
+                              }
+                            },
+                            icon: Icon(phone != null ? Icons.phone_rounded : Icons.info_outline_rounded,
+                                color: accentColor),
+                          ),
+                        ),
+                      const SizedBox(height: 6),
+                        if (widget.showEditAction)
+                          SizedBox(
+                            height: 28,
+                            width: 28,
+                            child: IconButton(
+                              padding: EdgeInsets.zero,
+                              iconSize: 18,
+                              splashRadius: 18,
+                              onPressed: () {
+                                HapticFeedback.lightImpact();
+                                Navigator.pushNamed(context, '/moradores-detalhe', arguments: m.id as String);
+                              },
+                              icon: Icon(Icons.edit_rounded, color: OwanyTheme.textMutedColor(context)),
+                            ),
+                          ),
+                    ],
                   ),
-                  child: Icon(Icons.chevron_right_rounded,
-                      size: 16, color: accentColor),
                 ),
               ],
             ),

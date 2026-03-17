@@ -48,6 +48,23 @@ class _MaintenanceRequestScreenState extends State<MaintenanceRequestScreen>
   bool _initializedFromArgs = false;
   bool _isSubmitting = false;
 
+  void _setApartamentoSelecionado(String? novoApartamentoId) {
+    if (_apartamentoSelecionado == novoApartamentoId) return;
+    _apartamentoSelecionado = novoApartamentoId;
+    // Troca de apartamento invalida item selecionado
+    _itemApartamentoSelecionadoId = null;
+    _itemApartamentoNome = null;
+  }
+
+  void _syncApartamentoFromMorador(Morador? morador) {
+    final aptId = morador?.apartamentoId?.trim() ?? '';
+    if (aptId.isNotEmpty) {
+      _setApartamentoSelecionado(aptId);
+    } else {
+      _setApartamentoSelecionado(null);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -79,7 +96,7 @@ class _MaintenanceRequestScreenState extends State<MaintenanceRequestScreen>
       // Verificar se apartamentoId existe E não é vazio
       final aptId = moradorInfo.apartamentoId;
       if (aptId.isNotEmpty) {
-        _apartamentoSelecionado = aptId;
+        _setApartamentoSelecionado(aptId);
         _moradorSelecionado = moradorInfo.moradorId;
         AppLogger.info(
           'MaintenanceRequestScreen',
@@ -116,7 +133,7 @@ class _MaintenanceRequestScreenState extends State<MaintenanceRequestScreen>
     if (args is Map && args['apartamentoId'] is String) {
       final authProvider = context.read<AuthProvider>();
       if (authProvider.usuarioAtual?.moradorInfo == null) {
-        _apartamentoSelecionado = args['apartamentoId'] as String;
+        _setApartamentoSelecionado(args['apartamentoId'] as String);
       }
     }
     _initializedFromArgs = true;
@@ -816,7 +833,19 @@ class _MaintenanceRequestScreenState extends State<MaintenanceRequestScreen>
                     ),
                   )
                   .toList(),
-              onChanged: (value) => setState(() => _moradorSelecionado = value),
+              onChanged: (value) {
+                setState(() {
+                  _moradorSelecionado = value;
+                  Morador? morador;
+                  for (final m in provider.moradores) {
+                    if (m.id == value) {
+                      morador = m;
+                      break;
+                    }
+                  }
+                  _syncApartamentoFromMorador(morador);
+                });
+              },
               hint: Text(
                 AppLocalizations.of(
                   context,
@@ -843,6 +872,74 @@ class _MaintenanceRequestScreenState extends State<MaintenanceRequestScreen>
     ApartamentosProvider provider,
     bool showMoradorSelector,
   ) {
+    if (showMoradorSelector &&
+        (_moradorSelecionado == null || _moradorSelecionado!.isEmpty)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            AppLocalizations.of(context)!.maintenance_request_apartment,
+            style: TextStyle(
+              color: OwanyTheme.textPrimary(context),
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: OwanyTheme.backgroundColor(context),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: OwanyTheme.borderColor(context).withValues(alpha: 0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info_outline_rounded,
+                  color: OwanyTheme.primaryOrange,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _tx(
+                      'Selecione um morador para carregar o apartamento.',
+                      'Select a resident to load the apartment.',
+                    ),
+                    style: TextStyle(
+                      color: OwanyTheme.textMutedColor(context),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (showMoradorSelector) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            AppLocalizations.of(context)!.maintenance_request_apartment,
+            style: TextStyle(
+              color: OwanyTheme.textPrimary(context),
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _buildReadOnlyApartamento(context, provider),
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -947,7 +1044,7 @@ class _MaintenanceRequestScreenState extends State<MaintenanceRequestScreen>
               ),
             )
             .toList(),
-        onChanged: (value) => setState(() => _apartamentoSelecionado = value),
+        onChanged: (value) => setState(() => _setApartamentoSelecionado(value)),
         hint: Text(
           AppLocalizations.of(context)!.maintenance_request_select_apartment,
           style: TextStyle(

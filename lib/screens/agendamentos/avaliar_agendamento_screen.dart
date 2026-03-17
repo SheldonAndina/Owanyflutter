@@ -30,7 +30,7 @@ class _AvaliarAgendamentoScreenState extends State<AvaliarAgendamentoScreen> wit
   late Animation<Offset> _slideAnimation;
 
   final ScrollController _scrollController = ScrollController();
-  double _scrollOffset = 0.0;
+  final _scrollOffset = ValueNotifier<double>(0.0);
 
   int _rating = 0;
   bool _recomenda = false;
@@ -63,7 +63,7 @@ class _AvaliarAgendamentoScreenState extends State<AvaliarAgendamentoScreen> wit
     super.initState();
     _initializeAnimations();
     _scrollController.addListener(() {
-      setState(() => _scrollOffset = _scrollController.offset);
+      _scrollOffset.value = _scrollController.offset;
     });
   }
 
@@ -93,80 +93,84 @@ class _AvaliarAgendamentoScreenState extends State<AvaliarAgendamentoScreen> wit
     _slideController.dispose();
     _starController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     _comentarioController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: OwanyTheme.backgroundColor(context),
-      extendBodyBehindAppBar: true,
-      appBar: _buildGlassAppBar(),
-      body: Stack(
-        children: [
-          _buildAnimatedBackground(),
-          CustomScrollView(
-            controller: _scrollController,
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              const SliverToBoxAdapter(child: SizedBox(height: 100)),
-              SliverToBoxAdapter(
-                child: FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: SlideTransition(
-                    position: _slideAnimation,
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 600),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Agendamento Info
-                              _buildAgendamentoInfo(),
-                          SizedBox(height: 28),
+    return ValueListenableBuilder<double>(
+      valueListenable: _scrollOffset,
+      builder: (_, offset, __) => Scaffold(
+        backgroundColor: OwanyTheme.backgroundColor(context),
+        extendBodyBehindAppBar: true,
+        appBar: _buildGlassAppBar(offset),
+        body: Stack(
+          children: [
+            _buildAnimatedBackground(offset),
+            CustomScrollView(
+              controller: _scrollController,
+              physics: const BouncingScrollPhysics(),
+              slivers: [
+                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                SliverToBoxAdapter(
+                  child: FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: SlideTransition(
+                      position: _slideAnimation,
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 600),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Agendamento Info
+                                _buildAgendamentoInfo(),
+                                SizedBox(height: 28),
 
-                          // Rating Stars
-                          _buildRatingStars(),
-                          SizedBox(height: 28),
+                                // Rating Stars
+                                _buildRatingStars(),
+                                SizedBox(height: 28),
 
-                          // Rating Label
-                          _buildRatingLabel(),
-                          SizedBox(height: 28),
+                                // Rating Label
+                                _buildRatingLabel(),
+                                SizedBox(height: 28),
 
-                          // Aspectos
-                          _buildAspectos(),
-                          SizedBox(height: 28),
+                                // Aspectos
+                                _buildAspectos(),
+                                SizedBox(height: 28),
 
-                          // Recomendação
-                          _buildRecomendacao(),
-                          SizedBox(height: 28),
+                                // Recomendação
+                                _buildRecomendacao(),
+                                SizedBox(height: 28),
 
-                          // Comentário
-                          _buildComentario(),
-                          SizedBox(height: 28),
+                                // Comentário
+                                _buildComentario(),
+                                SizedBox(height: 28),
 
-                          // Buttons
-                          _buildActionButtons(),
-                              SizedBox(height: 60),
-                            ],
+                                // Buttons
+                                _buildActionButtons(),
+                                SizedBox(height: 60),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  PreferredSizeWidget _buildGlassAppBar() {
+  PreferredSizeWidget _buildGlassAppBar(double offset) {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.transparent,
@@ -187,11 +191,14 @@ class _AvaliarAgendamentoScreenState extends State<AvaliarAgendamentoScreen> wit
       flexibleSpace: ClipRRect(
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: _scrollOffset > 50 ? 15.0 : 0.0, sigmaY: _scrollOffset > 50 ? 15.0 : 0.0),
+          filter: ImageFilter.blur(
+            sigmaX: offset > 50 ? 15.0 : 0.0,
+            sigmaY: offset > 50 ? 15.0 : 0.0,
+          ),
           child: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: _scrollOffset > 50
+                colors: offset > 50
                     ? [OwanyTheme.warning.withValues(alpha: 0.95), OwanyTheme.primaryOrange.withValues(alpha: 0.9)]
                     : [OwanyTheme.warning.withValues(alpha: 0.75), OwanyTheme.primaryOrange.withValues(alpha: 0.6)],
               ),
@@ -218,9 +225,9 @@ class _AvaliarAgendamentoScreenState extends State<AvaliarAgendamentoScreen> wit
     );
   }
 
-  Widget _buildAnimatedBackground() {
+  Widget _buildAnimatedBackground(double offset) {
     return Positioned(
-      top: -_scrollOffset * 0.5,
+      top: -offset * 0.5,
       left: 0,
       right: 0,
       child: Container(

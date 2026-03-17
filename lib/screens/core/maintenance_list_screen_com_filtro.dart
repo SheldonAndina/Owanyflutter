@@ -12,7 +12,10 @@ class MaintenanceListScreenComFiltroApartamento extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider.value(
       value: Provider.of<SolicitacoesProvider>(context, listen: false),
-      child: MaintenanceListScreen(apartamentoId: apartamentoId),
+      child: MaintenanceListScreen(
+        apartamentoId: apartamentoId,
+        permitirAbrirDetalhe: false,
+      ),
     );
   }
 }

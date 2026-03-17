@@ -61,6 +61,12 @@ class SolicitacoesProvider with ChangeNotifier {
   // KPIs do dashboard (carregados via endpoint dedicado)
   SolicitacoesKpisDto? _kpis;
   bool _isLoadingKpis = false;
+  DateTime? _lastKpisLoadedAt;
+
+  // Cache simples para lista de solicitações (evita refetch ao navegar)
+  DateTime? _lastSolicitacoesLoadedAt;
+  String? _lastSolicitacoesKey;
+  static const Duration _solicitacoesCacheTtl = Duration(minutes: 2);
 
   // Tipos de solicitação (sincronizado com backend)
   List<TipoSolicitacaoDto> _tipos = [];
@@ -146,6 +152,32 @@ class SolicitacoesProvider with ChangeNotifier {
   String _normalizeEstadoForApi(String? estado) {
     final e = estadoFromString(estado);
     return estadoToString(e);
+  }
+
+  String _buildSolicitacoesKey({
+    String? status,
+    String? apartamentoId,
+    String? responsavelId,
+    bool verTodas = false,
+    bool carregarTodas = false,
+    bool incluirHistorico = false,
+  }) {
+    return [
+      status ?? '',
+      apartamentoId ?? '',
+      responsavelId ?? '',
+      verTodas ? '1' : '0',
+      carregarTodas ? '1' : '0',
+      incluirHistorico ? '1' : '0',
+      _pageSize.toString(),
+    ].join('|');
+  }
+
+  bool _isSolicitacoesCacheFresh(String key) {
+    if (_lastSolicitacoesKey != key) return false;
+    if (_lastSolicitacoesLoadedAt == null) return false;
+    final age = DateTime.now().difference(_lastSolicitacoesLoadedAt!);
+    return age < _solicitacoesCacheTtl && _solicitacoes.isNotEmpty;
   }
 
   String _buildSolicitacaoTag(String? solicitacaoId) {
@@ -376,6 +408,8 @@ class SolicitacoesProvider with ChangeNotifier {
     _apartamentoIdFilter = null;
     _responsavelIdFilter = null;
     _errorMessage = null;
+    _lastSolicitacoesKey = null;
+    _lastSolicitacoesLoadedAt = null;
     notifyListeners();
   }
 
@@ -773,11 +807,17 @@ class SolicitacoesProvider with ChangeNotifier {
   /// Carrega KPIs de solicitações via endpoint dedicado (1 chamada, retorno rápido).
   /// Ideal para o dashboard — evita carregar todas as páginas de solicitações.
   Future<void> carregarKpis() async {
+    if (_kpis != null &&
+        _lastKpisLoadedAt != null &&
+        DateTime.now().difference(_lastKpisLoadedAt!) < _solicitacoesCacheTtl) {
+      return;
+    }
     _isLoadingKpis = true;
     notifyListeners();
 
     try {
       _kpis = await ApiService().getSolicitacoesKpis();
+      _lastKpisLoadedAt = DateTime.now();
     } catch (e) {
       // KPIs são informativos; se falhar, dashboard pode usar dados parciais
       debugPrint('[SolicitacoesProvider] Erro ao carregar KPIs: $e');
@@ -799,7 +839,24 @@ class SolicitacoesProvider with ChangeNotifier {
     bool verTodas = false,
     bool refresh = false,
     bool carregarTodas = false,
+    bool incluirHistorico = false,
   }) async {
+    final cacheKey = _buildSolicitacoesKey(
+      status: status,
+      apartamentoId: apartamentoId,
+      responsavelId: responsavelId,
+      verTodas: verTodas,
+      carregarTodas: carregarTodas,
+      incluirHistorico: incluirHistorico,
+    );
+    if (!refresh && _isSolicitacoesCacheFresh(cacheKey)) {
+      _statusFilter = status;
+      _apartamentoIdFilter = apartamentoId;
+      _responsavelIdFilter = responsavelId;
+      _verTodasSolicitacoes = verTodas;
+      return;
+    }
+
     if (refresh) {
       _currentPage = 1;
       _solicitacoes.clear();
@@ -818,6 +875,7 @@ class SolicitacoesProvider with ChangeNotifier {
         apartamentoId: apartamentoId,
         responsavelId: responsavelId,
         verTodas: verTodas,
+        incluirHistorico: incluirHistorico,
       );
 
       if (refresh || _currentPage == 1) {
@@ -838,6 +896,7 @@ class SolicitacoesProvider with ChangeNotifier {
             apartamentoId: apartamentoId,
             responsavelId: responsavelId,
             verTodas: verTodas,
+            incluirHistorico: incluirHistorico,
           );
           _solicitacoes.addAll(nextResult.items);
           hasNext = nextResult.hasNextPage;
@@ -859,6 +918,8 @@ class SolicitacoesProvider with ChangeNotifier {
       _statusFilter = status;
       _apartamentoIdFilter = apartamentoId;
       _responsavelIdFilter = responsavelId;
+      _lastSolicitacoesKey = cacheKey;
+      _lastSolicitacoesLoadedAt = DateTime.now();
 
       _errorMessage = null;
     } catch (e) {

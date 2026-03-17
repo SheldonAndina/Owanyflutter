@@ -100,6 +100,32 @@ class NotificationNavigationService {
     );
   }
 
+  Future<void> showSimpleNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    if (!_initialized) return;
+
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _channel.id,
+        _channel.name,
+        channelDescription: _channel.description,
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    );
+
+    await _plugin.show(
+      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title: title,
+      body: body,
+      notificationDetails: details,
+      payload: payload,
+    );
+  }
+
   bool navigateFromNotificacao(Notificacao notificacao) {
     final payload = _payloadFromNotificacao(notificacao);
     if (payload == null || payload.isEmpty) return false;

@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../utils/app_logger.dart';
 
 /// Helper para downloads de arquivos com opção de escolha de local
@@ -32,36 +35,66 @@ class FileDownloadHelper {
       AppLogger.info(_tag, '  Nome: $fileNameWithoutExt');
       AppLogger.info(_tag, '  Extensão: $fileExtension');
 
-      // Abrir diálogo para usuário escolher onde salvar
+      final Uint8List bytesToWrite = fileBytes is Uint8List
+          ? fileBytes
+          : Uint8List.fromList(fileBytes);
+
+      if (Platform.isAndroid || Platform.isIOS) {
+        // FilePicker.saveFile is not supported on Android/iOS.
+        // Save to a temp file and open share sheet so the user can save.
+        final tempDir = await getTemporaryDirectory();
+        final tempPath = path.join(
+          tempDir.path,
+          '$fileNameWithoutExt.$fileExtension',
+        );
+        AppLogger.info(_tag, '  📱 Salvando em temporário: $tempPath');
+        final tempFile = File(tempPath);
+        await tempFile.writeAsBytes(bytesToWrite, flush: true);
+
+        await Share.shareXFiles(
+          [XFile(tempPath)],
+          text: 'Salvar $fileNameWithoutExt.$fileExtension',
+        );
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Arquivo preparado para salvar/compartilhar.'),
+              backgroundColor: Color(0xFF059669),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return true;
+      }
+
+      // Desktop/Web: abrir diálogo para usuário escolher onde salvar
       AppLogger.info(_tag, '  ⏳ Abrindo diálogo para escolher local...');
-      
+
       final String? selectedPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Salvar arquivo',
         fileName: '$fileNameWithoutExt.$fileExtension',
         type: FileType.custom,
         allowedExtensions: [fileExtension],
       );
-      
+
       if (selectedPath == null) {
         AppLogger.info(_tag, '  ❌ Download cancelado pelo usuário');
         return false;
       }
-      
+
       // Garantir que o arquivo tem a extensão correta
       String filePath = selectedPath;
       if (!filePath.toLowerCase().endsWith('.$fileExtension')) {
         filePath = '$selectedPath.$fileExtension';
       }
-      
+
       AppLogger.info(_tag, '  ✅ Local escolhido: $filePath');
 
       // Escrever bytes no arquivo
       AppLogger.info(_tag, '  📝 Escrevendo bytes no arquivo...');
       final file = File(filePath);
       // Converter para Uint8List para garantir escrita correta de bytes binários
-      final Uint8List bytesToWrite = fileBytes is Uint8List
-          ? fileBytes
-          : Uint8List.fromList(fileBytes);
       await file.writeAsBytes(bytesToWrite, flush: true);
       
       AppLogger.info(_tag, '  ✅ Arquivo escrito com sucesso');

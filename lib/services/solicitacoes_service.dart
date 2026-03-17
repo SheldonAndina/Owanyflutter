@@ -12,16 +12,19 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../dto/solicitacoes_v2_dtos.dart';
 import 'api_service.dart';
+import '../utils/http_client_factory.dart'
+    if (dart.library.io) '../utils/http_client_factory_io.dart';
 
 class SolicitacoesService {
   // ✅ ENDPOINTS V1 - Validados e funcional
-  static const String baseUrl = 'https://localhost:7068/api/Solicitacoes';
+  static String get baseUrl => '${ApiService().baseUrl}/Solicitacoes';
   static const Duration _timeout = Duration(seconds: 30);
 
   final http.Client httpClient;
   final String? token;
 
-  SolicitacoesService({http.Client? httpClient, this.token}) : httpClient = httpClient ?? http.Client();
+  SolicitacoesService({http.Client? httpClient, this.token})
+      : httpClient = httpClient ?? createHttpClient();
 
   String? get _token => token ?? ApiService().token;
 
@@ -40,6 +43,7 @@ class SolicitacoesService {
     String? apartamentoId,
     String? responsavelId,
     bool verTodas = false,
+    bool incluirHistorico = false,
   }) async {
     try {
       final queryParams = <String, String>{
@@ -50,6 +54,31 @@ class SolicitacoesService {
         'responsavelId': ?responsavelId,
         'verTodas': verTodas.toString(),
       };
+
+      // If caller explicitly requested history for a morador via apartamentos/{id}/solicitacoes
+      if (incluirHistorico && apartamentoId != null && apartamentoId.trim().isNotEmpty) {
+        final q = Map<String, String>.from(queryParams);
+        q['incluirHistorico'] = 'true';
+        // Build URL: {baseApi}/apartamentos/{id}/solicitacoes
+        final apartamentosUrl = '${ApiService().baseUrl}/apartamentos/${apartamentoId.trim()}/solicitacoes';
+        final uri = Uri.parse(apartamentosUrl).replace(queryParameters: q);
+        final response = await httpClient.get(uri, headers: _headers).timeout(_timeout);
+
+        if (response.statusCode == 200) {
+          final json = jsonDecode(response.body) as Map<String, dynamic>;
+
+          if (json['sucesso'] == true && json['data'] != null) {
+            return PagedResult.fromJson(
+              json['data'] as Map<String, dynamic>,
+              (itemJson) => SolicitacaoListaDto.fromJson(itemJson),
+            );
+          }
+
+          throw Exception(json['mensagem'] ?? 'Erro ao buscar solicitações');
+        }
+
+        throw Exception('Erro HTTP ${response.statusCode}');
+      }
 
       final uri = Uri.parse(baseUrl).replace(queryParameters: queryParams);
       final response = await httpClient.get(uri, headers: _headers).timeout(_timeout);

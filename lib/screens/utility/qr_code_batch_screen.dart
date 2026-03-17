@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:archive/archive.dart';
 
 import '../../dto/qr_code_batch_dtos.dart';
 import '../../models/enums.dart';
@@ -165,7 +167,7 @@ class _QrCodeBatchScreenState extends State<QrCodeBatchScreen> {
     });
 
     try {
-      final bytes = await _apiService.downloadQrCodesBatch(
+      var bytes = await _apiService.downloadQrCodesBatch(
         estado: _estadoSelecionado?.isNotEmpty == true
             ? _estadoSelecionado
             : null,
@@ -175,7 +177,66 @@ class _QrCodeBatchScreenState extends State<QrCodeBatchScreen> {
       if (!mounted) return;
 
       // Formato PDF → guardar como .pdf; SVG/PNG → ZIP com múltiplos ficheiros
-      final extensao = _formatoSelecionado == 'pdf' ? 'pdf' : 'zip';
+      var extensao = _formatoSelecionado == 'pdf' ? 'pdf' : 'zip';
+      if (_formatoSelecionado == 'pdf') {
+        if (_looksLikePdfBytes(bytes)) {
+          // ok
+        } else if (_looksLikeZipBytes(bytes)) {
+          final extracted = _extractSinglePdfFromZip(bytes);
+          if (extracted != null) {
+            bytes = extracted;
+            ScaffoldMessenger.of(context).showSnackBar(
+              OwanyTheme.snackBar(
+                _tx(
+                  'PDF extraído do ZIP retornado pelo servidor.',
+                  'PDF extracted from ZIP returned by the server.',
+                ),
+                type: SnackBarType.info,
+              ),
+            );
+          } else {
+            extensao = 'zip';
+            final hasPdf = _zipHasPdf(bytes);
+            ScaffoldMessenger.of(context).showSnackBar(
+              OwanyTheme.snackBar(
+                hasPdf
+                    ? _tx(
+                        'Servidor retornou ZIP com múltiplos PDFs. Salvando como .zip.',
+                        'Server returned ZIP with multiple PDFs. Saving as .zip.',
+                      )
+                    : _tx(
+                        'Servidor retornou ZIP sem PDF. Salvando como .zip.',
+                        'Server returned ZIP without PDF. Saving as .zip.',
+                      ),
+                type: SnackBarType.warning,
+              ),
+            );
+          }
+        } else if (_looksLikeJsonBytes(bytes)) {
+          throw Exception(
+            _tx(
+              'Servidor retornou JSON em vez de PDF.',
+              'Server returned JSON instead of PDF.',
+            ),
+          );
+        } else {
+          throw Exception(
+            _tx(
+              'Servidor não retornou um PDF válido.',
+              'Server did not return a valid PDF.',
+            ),
+          );
+        }
+      } else {
+        if (!_looksLikeZipBytes(bytes) && _looksLikeJsonBytes(bytes)) {
+          throw Exception(
+            _tx(
+              'Servidor retornou JSON em vez de ZIP.',
+              'Server returned JSON instead of ZIP.',
+            ),
+          );
+        }
+      }
       final timestamp = DateTime.now()
           .toIso8601String()
           .replaceAll(':', '-')
@@ -860,5 +921,58 @@ class _QrCodeBatchScreenState extends State<QrCodeBatchScreen> {
         ],
       ),
     );
+  }
+
+  bool _looksLikePdfBytes(List<int> bytes) {
+    return bytes.length >= 4 &&
+        bytes[0] == 0x25 && // %
+        bytes[1] == 0x50 && // P
+        bytes[2] == 0x44 && // D
+        bytes[3] == 0x46; // F
+  }
+
+  bool _looksLikeZipBytes(List<int> bytes) {
+    return bytes.length >= 4 &&
+        bytes[0] == 0x50 &&
+        bytes[1] == 0x4B &&
+        bytes[2] == 0x03 &&
+        bytes[3] == 0x04;
+  }
+
+  bool _looksLikeJsonBytes(List<int> bytes) {
+    if (bytes.isEmpty) return false;
+    final first = bytes.first;
+    return first == 0x7B || first == 0x5B; // { or [
+  }
+
+  bool _zipHasPdf(List<int> bytes) {
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      return archive.files.any(
+        (file) => file.isFile && file.name.toLowerCase().endsWith('.pdf'),
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  List<int>? _extractSinglePdfFromZip(List<int> bytes) {
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      final pdfFiles = archive.files
+          .where(
+            (file) =>
+                file.isFile && file.name.toLowerCase().endsWith('.pdf'),
+          )
+          .toList();
+      if (pdfFiles.length != 1) return null;
+
+      final content = pdfFiles.first.content;
+      if (content is Uint8List) return content;
+      if (content is List<int>) return content;
+      return null;
+    } catch (_) {
+      return null;
+    }
   }
 }

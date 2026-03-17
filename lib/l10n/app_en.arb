@@ -732,6 +732,7 @@
   "users_deactivate": "Deactivate User?",
   "users_deactivate_confirm": "Are you sure you want to deactivate this user?",
   "users_deactivate_button": "Deactivate",
+  "common_activate": "Activate",
   "users_edit_title": "Edit User",
   "users_update_data": "Update user data",
   "users_update_info": "Edit basic information. User type is read-only for security.",

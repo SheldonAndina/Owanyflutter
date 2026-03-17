@@ -14,8 +14,14 @@ import 'package:owany_app/screens/core/maintenance_detail_screen.dart';
 class MaintenanceListScreen extends StatefulWidget {
   /// Filtro opcional de apartamento para mostrar apenas solicitações de um apartamento específico
   final String? apartamentoId;
+  /// Controla se pode abrir o detalhe da manutenção ao tocar no card
+  final bool permitirAbrirDetalhe;
   
-  const MaintenanceListScreen({super.key, this.apartamentoId});
+  const MaintenanceListScreen({
+    super.key,
+    this.apartamentoId,
+    this.permitirAbrirDetalhe = true,
+  });
 
   @override
   State<MaintenanceListScreen> createState() => _MaintenanceListScreenState();
@@ -27,6 +33,21 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
   String _searchQuery = '';
   final _searchController = TextEditingController();
   String? _apartamentoSubtitulo;
+  bool _mostrarAgrupado = true;
+  final Map<String, bool> _expandedGroups = {};
+  List<SolicitacaoListaDto>? _filteredCache;
+  List<SolicitacaoListaDto>? _cachedSource;
+  int _cachedSourceLength = -1;
+  String? _cachedSourceFirstId;
+  String? _cachedSourceLastId;
+  String _cachedFiltroStatus = 'todas';
+  String _cachedFiltroVisao = 'todas';
+  String _cachedSearchQuery = '';
+  List<SolicitacaoListaDto>? _searchIndexSource;
+  int _searchIndexLength = -1;
+  String? _searchIndexFirstId;
+  String? _searchIndexLastId;
+  Map<String, String> _searchIndex = {};
 
   String _tx(String pt, String en) {
     final code = Localizations.localeOf(context).languageCode.toLowerCase();
@@ -60,7 +81,7 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
             apartamentoId: aptId,
             responsavelId: respId,
             verTodas: verTodas,
-            refresh: true,
+            refresh: false,
           );
         }
       }
@@ -94,6 +115,20 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
   }
 
   List<SolicitacaoListaDto> _filtrarSolicitacoes(List<SolicitacaoListaDto> lista) {
+    final length = lista.length;
+    final firstId = length > 0 ? lista.first.id : null;
+    final lastId = length > 0 ? lista.last.id : null;
+    final canUseCache =
+        identical(_cachedSource, lista) &&
+        _cachedSourceLength == length &&
+        _cachedSourceFirstId == firstId &&
+        _cachedSourceLastId == lastId &&
+        _cachedFiltroStatus == _filtroStatus &&
+        _cachedFiltroVisao == _filtroVisao &&
+        _cachedSearchQuery == _searchQuery &&
+        _filteredCache != null;
+    if (canUseCache) return _filteredCache!;
+
     var resultado = lista;
 
     // Filtrar por visão (minhas vs todas)
@@ -113,13 +148,47 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
 
     // Filtrar por busca
     if (_searchQuery.isNotEmpty) {
-      resultado = resultado.where((s) => s.titulo.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
+      if (!identical(_searchIndexSource, lista) ||
+          _searchIndexLength != length ||
+          _searchIndexFirstId != firstId ||
+          _searchIndexLastId != lastId) {
+        _searchIndexSource = lista;
+        _searchIndexLength = length;
+        _searchIndexFirstId = firstId;
+        _searchIndexLastId = lastId;
+        _searchIndex = {
+          for (final s in lista)
+            s.id: [
+              s.titulo,
+              s.numeroApartamento,
+              s.blocoApartamento,
+              s.nomeUsuarioCriador,
+              s.nomeResponsavel ?? '',
+              s.tipoSolicitacaoNome ?? '',
+              s.id,
+            ].map((e) => e.toLowerCase()).join('|'),
+        };
+      }
+      final q = _searchQuery.toLowerCase();
+      resultado = resultado.where((s) => (_searchIndex[s.id] ?? '').contains(q)).toList();
     }
 
     // Ordenar por data de criação (mais recentes primeiro)
     resultado.sort((a, b) => (b.criadoEm).compareTo(a.criadoEm));
 
+    _cachedSource = lista;
+    _cachedSourceLength = length;
+    _cachedSourceFirstId = firstId;
+    _cachedSourceLastId = lastId;
+    _cachedFiltroStatus = _filtroStatus;
+    _cachedFiltroVisao = _filtroVisao;
+    _cachedSearchQuery = _searchQuery;
+    _filteredCache = resultado;
     return resultado;
+  }
+
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
   }
 
   Color _corStatus(String status) {
@@ -154,6 +223,180 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
     } else {
       return '${data.day}/${data.month}/${data.year}';
     }
+  }
+
+  Widget _buildGroupLabel(String title, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: OwanyTheme.textPrimary(context),
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '$count',
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompactCard(SolicitacaoListaDto solicitacao) {
+    final cor = _corStatus(solicitacao.status);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: OwanyTheme.cardColor(context),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cor.withValues(alpha: 0.2)),
+      ),
+      child: ListTile(
+        onTap: widget.permitirAbrirDetalhe
+            ? () {
+                HapticFeedback.lightImpact();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MaintenanceDetailScreen(
+                      solicitacaoId: solicitacao.id,
+                    ),
+                  ),
+                );
+              }
+            : null,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        leading: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: cor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            solicitacao.status == 'Concluido'
+                ? Icons.check_circle_rounded
+                : solicitacao.status == 'Pendente'
+                    ? Icons.schedule_rounded
+                    : Icons.build_circle_rounded,
+            color: cor,
+            size: 18,
+          ),
+        ),
+        title: Text(
+          solicitacao.titulo,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: OwanyTheme.textPrimary(context),
+          ),
+        ),
+        subtitle: Wrap(
+          spacing: 10,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Icon(Icons.access_time_rounded, size: 12, color: OwanyTheme.textMutedColor(context)),
+            Text(
+              _formatarData(solicitacao.criadoEm),
+              style: TextStyle(fontSize: 11, color: OwanyTheme.textMutedColor(context)),
+            ),
+            Icon(Icons.apartment_rounded, size: 12, color: OwanyTheme.textMutedColor(context)),
+            Text(
+              widget.apartamentoId != null
+                  ? (solicitacao.nomeUsuarioCriador.isNotEmpty
+                      ? solicitacao.nomeUsuarioCriador
+                      : 'Morador')
+                  : 'Apt ${solicitacao.numeroApartamento}',
+              style: TextStyle(fontSize: 11, color: OwanyTheme.textMutedColor(context)),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: cor.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: cor.withValues(alpha: 0.3)),
+          ),
+          child: Text(
+            _traduzirStatus(solicitacao.status, context),
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: cor),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildGroupedList(List<SolicitacaoListaDto> list) {
+    final pendentes = list.where((s) => s.status == 'Pendente').toList();
+    final andamento = list.where((s) => s.status == 'EmAndamento' || s.status == 'EmAnalise').toList();
+    final concluidas = list.where((s) => s.status == 'Concluido').toList();
+    final outros = list.where((s) =>
+        s.status != 'Pendente' &&
+        s.status != 'EmAndamento' &&
+        s.status != 'EmAnalise' &&
+        s.status != 'Concluido').toList();
+
+    final widgets = <Widget>[];
+    void addSection(String title, List<SolicitacaoListaDto> src, Color color) {
+      if (src.isEmpty) return;
+      if (widgets.isNotEmpty) widgets.add(const SizedBox(height: 12));
+      final isExpanded = _expandedGroups[title] ?? false;
+      widgets.add(
+        InkWell(
+          onTap: () => setState(() => _expandedGroups[title] = !isExpanded),
+          child: Row(
+            children: [
+              Expanded(child: _buildGroupLabel(title, src.length, color)),
+              const SizedBox(width: 6),
+              Transform.rotate(
+                angle: isExpanded ? 0 : -3.1416 / 2,
+                child: Icon(Icons.chevron_left_rounded, color: OwanyTheme.textMutedColor(context)),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (isExpanded) {
+        widgets.add(const SizedBox(height: 8));
+        widgets.addAll(src.map(_buildCompactCard));
+      }
+    }
+
+    addSection(_tx('Pendentes', 'Pending'), pendentes, OwanyTheme.error);
+    addSection(_tx('Em andamento', 'In progress'), andamento, OwanyTheme.warning);
+    addSection(_tx('Concluídas', 'Completed'), concluidas, OwanyTheme.success);
+    addSection(_tx('Outros', 'Others'), outros, OwanyTheme.textMutedColor(context));
+    return widgets;
   }
 
   @override
@@ -227,48 +470,8 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
 
           final solicitacoesFiltradasLista = _filtrarSolicitacoes(provider.solicitacoes);
 
-          // Contar por status
-          final pendentes = provider.solicitacoes.where((s) => s.status == 'Pendente').length;
-          final emAndamento = provider.solicitacoes.where((s) => s.status == 'EmAndamento' || s.status == 'EmAnalise').length;
-          final concluidas = provider.solicitacoes.where((s) => s.status == 'Concluido').length;
-
           return Column(
             children: [
-              // Dashboard Cards
-              Container(
-                padding: const EdgeInsets.all(16),
-                color: OwanyTheme.textPrimary(context).withValues(alpha: 0.05),
-                child: GridView.count(
-                  crossAxisCount: 3,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  children: [
-                    _buildDashboardCard(
-                      AppLocalizations.of(context)!.maintenance_pending_count,
-                      pendentes.toString(),
-                      OwanyTheme.error,
-                      Icons.schedule,
-                    ),
-                    _buildDashboardCard(
-                      AppLocalizations.of(context)!.maintenance_in_progress_count,
-                      emAndamento.toString(),
-                      OwanyTheme.warning,
-                      Icons.build,
-                    ),
-                    _buildDashboardCard(
-                      AppLocalizations.of(context)!.maintenance_completed_count,
-                      concluidas.toString(),
-                      OwanyTheme.success,
-                      Icons.check_circle,
-                    ),
-                  ],
-                ),
-              ),
-
-              SizedBox(height: 12),
-
               // Filtros e busca
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -281,6 +484,7 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
                       onChanged: (value) {
                         setState(() {
                           _searchQuery = value;
+                          _invalidateFilteredCache();
                         });
                       },
                       style: TextStyle(
@@ -322,6 +526,7 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
                               onSelectionChanged: (Set<String> newSelection) {
                                 setState(() {
                                   _filtroVisao = newSelection.first;
+                                  _invalidateFilteredCache();
                                 });
                                 final verTodas = _filtroVisao == 'todas';
                                 final auth = context.read<AuthProvider>();
@@ -359,6 +564,25 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
                           _buildStatusChip('concluidas', AppLocalizations.of(context)!.maintenance_completed_count),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _tx('Agrupar por status', 'Group by status'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: OwanyTheme.textMutedColor(context),
+                          ),
+                        ),
+                        Switch(
+                          value: _mostrarAgrupado,
+                          onChanged: (v) => setState(() => _mostrarAgrupado = v),
+                          activeColor: OwanyTheme.primaryOrange,
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -406,233 +630,11 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
                 )
               else
                 Expanded(
-                  child: ListView.builder(
+                  child: ListView(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    itemCount: solicitacoesFiltradasLista.length,
-                    itemBuilder: (context, index) {
-                      final solicitacao = solicitacoesFiltradasLista[index];
-                      final cor = _corStatus(solicitacao.status);
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 8),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(color: cor.withValues(alpha: 0.3), width: 1.5),
-                        ),
-                        elevation: 2,
-                        shadowColor: cor.withValues(alpha: 0.2),
-                        child: InkWell(
-                          onTap: () {
-                            HapticFeedback.lightImpact();
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => MaintenanceDetailScreen(
-                                  solicitacaoId: solicitacao.id,
-                                ),
-                              ),
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: cor.withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      child: Icon(
-                                        solicitacao.status == 'Concluido'
-                                            ? Icons.check_circle_rounded
-                                            : solicitacao.status == 'Pendente'
-                                            ? Icons.schedule_rounded
-                                            : Icons.build_circle_rounded,
-                                        color: cor,
-                                        size: 22,
-                                      ),
-                                    ),
-                                    SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            solicitacao.titulo,
-                                            style: TextStyle(
-                                              fontSize: 15, 
-                                              fontWeight: FontWeight.w700,
-                                              color: OwanyTheme.textPrimary(context),
-                                            ),
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                          SizedBox(height: 6),
-                                          Row(
-                                            children: [
-                                              if (widget.apartamentoId != null) ...[  
-                                                Icon(Icons.person_outline_rounded, size: 14, color: OwanyTheme.textMutedColor(context)),
-                                                SizedBox(width: 4),
-                                                Flexible(
-                                                  child: Text(
-                                                    solicitacao.nomeUsuarioCriador,
-                                                    style: TextStyle(
-                                                      fontSize: 12,
-                                                      color: OwanyTheme.textMutedColor(context),
-                                                      fontWeight: FontWeight.w500,
-                                                    ),
-                                                    overflow: TextOverflow.ellipsis,
-                                                  ),
-                                                ),
-                                              ] else ...[  
-                                                Icon(Icons.apartment_rounded, size: 14, color: OwanyTheme.textMutedColor(context)),
-                                                SizedBox(width: 4),
-                                                Text(
-                                                  'Apt ${solicitacao.numeroApartamento}',
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    color: OwanyTheme.textMutedColor(context),
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
-                                                ),
-                                              ],
-                                              SizedBox(width: 12),
-                                              Icon(Icons.access_time_rounded, size: 14, color: OwanyTheme.textMutedColor(context)),
-                                              SizedBox(width: 4),
-                                              Text(
-                                                _formatarData(solicitacao.criadoEm),
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: OwanyTheme.textMutedColor(context),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    // Status badge
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                      decoration: BoxDecoration(
-                                        color: cor.withValues(alpha: 0.15),
-                                        borderRadius: BorderRadius.circular(20),
-                                        border: Border.all(color: cor.withValues(alpha: 0.3)),
-                                      ),
-                                      child: Text(
-                                        _traduzirStatus(solicitacao.status, context),
-                                        style: TextStyle(
-                                          fontSize: 11, 
-                                          fontWeight: FontWeight.w700, 
-                                          color: cor,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                // Barra de progresso visual
-                                SizedBox(height: 12),
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: LinearProgressIndicator(
-                                    value: solicitacao.status == 'Concluido'
-                                        ? 1.0
-                                        : solicitacao.status == 'EmAndamento'
-                                            ? 0.6
-                                            : solicitacao.status == 'EmAnalise'
-                                                ? 0.3
-                                                : 0.1,
-                                    backgroundColor: OwanyTheme.borderColor(context),
-                                    color: cor,
-                                    minHeight: 4,
-                                  ),
-                                ),
-                                // Linha de metadados: tipo, responsável, prazo, contagens
-                                Builder(builder: (context) {
-                                  final temTipo = (solicitacao.tipoSolicitacaoNome?.isNotEmpty ?? false);
-                                  final temArea = (solicitacao.areaTecnicaNome?.isNotEmpty ?? false);
-                                  final temResponsavel = (solicitacao.nomeResponsavel?.isNotEmpty ?? false) &&
-                                      widget.apartamentoId == null;
-                                  final atrasado = solicitacao.prazoLimite != null &&
-                                      solicitacao.prazoLimite!.isBefore(DateTime.now()) &&
-                                      solicitacao.status != 'Concluido';
-                                  final prazoHoje = solicitacao.prazoLimite != null &&
-                                      !atrasado &&
-                                      solicitacao.prazoLimite!.difference(DateTime.now()).inHours <= 24 &&
-                                      solicitacao.status != 'Concluido';
-                                  final muted = OwanyTheme.textMutedColor(context);
-
-                                  if (!temTipo && !temArea && !temResponsavel &&
-                                      solicitacao.quantidadeComentarios == 0 &&
-                                      solicitacao.quantidadeAnexos == 0 &&
-                                      solicitacao.prazoLimite == null) {
-                                    return const SizedBox.shrink();
-                                  }
-
-                                  return Padding(
-                                    padding: const EdgeInsets.only(top: 10),
-                                    child: Wrap(
-                                      spacing: 8,
-                                      runSpacing: 4,
-                                      children: [
-                                        if (temTipo)
-                                          _buildMetaChip(
-                                            Icons.category_outlined,
-                                            solicitacao.tipoSolicitacaoNome!,
-                                            muted,
-                                          ),
-                                        if (temArea)
-                                          _buildMetaChip(
-                                            Icons.engineering_outlined,
-                                            solicitacao.areaTecnicaNome!,
-                                            muted,
-                                          ),
-                                        if (temResponsavel)
-                                          _buildMetaChip(
-                                            Icons.build_outlined,
-                                            solicitacao.nomeResponsavel!,
-                                            muted,
-                                          ),
-                                        if (solicitacao.quantidadeComentarios > 0)
-                                          _buildMetaChip(
-                                            Icons.chat_bubble_outline_rounded,
-                                            '${solicitacao.quantidadeComentarios}',
-                                            muted,
-                                          ),
-                                        if (solicitacao.quantidadeAnexos > 0)
-                                          _buildMetaChip(
-                                            Icons.attach_file_rounded,
-                                            '${solicitacao.quantidadeAnexos}',
-                                            muted,
-                                          ),
-                                        if (atrasado)
-                                          _buildMetaChip(
-                                            Icons.warning_amber_rounded,
-                                            'Prazo expirado',
-                                            OwanyTheme.error,
-                                          ),
-                                        if (prazoHoje)
-                                          _buildMetaChip(
-                                            Icons.schedule_rounded,
-                                            'Prazo hoje',
-                                            OwanyTheme.warning,
-                                          ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+                    children: _mostrarAgrupado
+                        ? _buildGroupedList(solicitacoesFiltradasLista)
+                        : solicitacoesFiltradasLista.map(_buildCompactCard).toList(),
                   ),
                 ),
             ],
@@ -644,48 +646,35 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
   }
 
   Widget _buildMetaChip(IconData icon, String label, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 12, color: color),
-        SizedBox(width: 3),
-        Text(
-          label,
-          style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w500),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDashboardCard(String titulo, String valor, Color cor, IconData icone) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: cor.withValues(alpha: 0.1),
-        border: Border.all(color: cor.withValues(alpha: 0.2)),
+        color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                titulo,
-                style: TextStyle(fontSize: 11, color: cor, fontWeight: FontWeight.w500),
-              ),
-              Icon(icone, color: cor, size: 16),
-            ],
-          ),
+          Icon(icon, size: 13, color: color.withValues(alpha: 0.95)),
+          const SizedBox(width: 6),
           Text(
-            valor,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: cor),
+            label,
+            style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
           ),
         ],
       ),
     );
+  }
+
+  String _formatRelative({DateTime? prazo}) {
+    if (prazo == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(prazo);
+    if (diff.inDays >= 1) return '${diff.inDays} dias atrás';
+    if (diff.inHours >= 1) return '${diff.inHours}h atrás';
+    if (diff.inMinutes >= 1) return '${diff.inMinutes}m atrás';
+    return 'agora';
   }
 
   Widget _buildStatusChip(String value, String label) {
@@ -696,6 +685,7 @@ class _MaintenanceListScreenState extends State<MaintenanceListScreen> {
       onSelected: (selected) {
         setState(() {
           _filtroStatus = value;
+          _invalidateFilteredCache();
         });
       },
       selectedColor: OwanyTheme.primaryOrange.withValues(alpha: 0.2),

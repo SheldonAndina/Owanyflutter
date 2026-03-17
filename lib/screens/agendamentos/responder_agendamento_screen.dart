@@ -30,7 +30,7 @@ class _ResponderAgendamentoScreenState extends State<ResponderAgendamentoScreen>
   late Animation<Offset> _slideAnimation;
 
   final ScrollController _scrollController = ScrollController();
-  double _scrollOffset = 0.0;
+  final _scrollOffset = ValueNotifier<double>(0.0);
 
   String? _selectedAction; // Will be set in initState/build with localized value
   final _mensagemController = TextEditingController();
@@ -55,7 +55,7 @@ class _ResponderAgendamentoScreenState extends State<ResponderAgendamentoScreen>
     super.initState();
     _initializeAnimations();
     _scrollController.addListener(() {
-      setState(() => _scrollOffset = _scrollController.offset);
+      _scrollOffset.value = _scrollController.offset;
     });
   }
 
@@ -85,6 +85,7 @@ class _ResponderAgendamentoScreenState extends State<ResponderAgendamentoScreen>
     _slideController.dispose();
     _expandController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     _mensagemController.dispose();
     super.dispose();
   }
@@ -95,64 +96,67 @@ class _ResponderAgendamentoScreenState extends State<ResponderAgendamentoScreen>
     // Initialize with localized value if null
     _selectedAction ??= l10n.responder_accept;
 
-    return Scaffold(
-      backgroundColor: OwanyTheme.backgroundColor(context),
-      extendBodyBehindAppBar: true,
-      appBar: _buildGlassAppBar(),
-      body: Stack(
-        children: [
-          _buildAnimatedBackground(),
-          CustomScrollView(
-            controller: _scrollController,
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              const SliverToBoxAdapter(child: SizedBox(height: 100)),
-              SliverToBoxAdapter(
-                child: FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: SlideTransition(
-                    position: _slideAnimation,
-                    child: Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 600),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Agendamento Original
-                              _buildAgendamentoCard(),
-                          SizedBox(height: 28),
+    return ValueListenableBuilder<double>(
+      valueListenable: _scrollOffset,
+      builder: (_, offset, __) => Scaffold(
+        backgroundColor: OwanyTheme.backgroundColor(context),
+        extendBodyBehindAppBar: true,
+        appBar: _buildGlassAppBar(offset),
+        body: Stack(
+          children: [
+            _buildAnimatedBackground(offset),
+            CustomScrollView(
+              controller: _scrollController,
+              physics: const BouncingScrollPhysics(),
+              slivers: [
+                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                SliverToBoxAdapter(
+                  child: FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: SlideTransition(
+                      position: _slideAnimation,
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 600),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Agendamento Original
+                                _buildAgendamentoCard(),
+                                SizedBox(height: 28),
 
-                          // Action Selection
-                          _buildActionSelector(),
-                          SizedBox(height: 28),
+                                // Action Selection
+                                _buildActionSelector(),
+                                SizedBox(height: 28),
 
-                          // Conditional Content
-                          if (_selectedAction == l10n.responder_decline) ...[
-                            _buildMensagemRecusa(),
-                            SizedBox(height: 28),
-                          ],
+                                // Conditional Content
+                                if (_selectedAction == l10n.responder_decline) ...[
+                                  _buildMensagemRecusa(),
+                                  SizedBox(height: 28),
+                                ],
 
-                          // Buttons
-                          _buildActionButtons(),
-                              SizedBox(height: 60),
-                            ],
+                                // Buttons
+                                _buildActionButtons(),
+                                SizedBox(height: 60),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  PreferredSizeWidget _buildGlassAppBar() {
+  PreferredSizeWidget _buildGlassAppBar(double offset) {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.transparent,
@@ -173,11 +177,14 @@ class _ResponderAgendamentoScreenState extends State<ResponderAgendamentoScreen>
       flexibleSpace: ClipRRect(
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: _scrollOffset > 50 ? 15.0 : 0.0, sigmaY: _scrollOffset > 50 ? 15.0 : 0.0),
+          filter: ImageFilter.blur(
+            sigmaX: offset > 50 ? 15.0 : 0.0,
+            sigmaY: offset > 50 ? 15.0 : 0.0,
+          ),
           child: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: _scrollOffset > 50
+                colors: offset > 50
                     ? [OwanyTheme.info.withValues(alpha: 0.95), OwanyTheme.info.withValues(alpha: 0.9)]
                     : [OwanyTheme.info.withValues(alpha: 0.75), OwanyTheme.info.withValues(alpha: 0.6)],
               ),
@@ -204,9 +211,9 @@ class _ResponderAgendamentoScreenState extends State<ResponderAgendamentoScreen>
     );
   }
 
-  Widget _buildAnimatedBackground() {
+  Widget _buildAnimatedBackground(double offset) {
     return Positioned(
-      top: -_scrollOffset * 0.5,
+      top: -offset * 0.5,
       left: 0,
       right: 0,
       child: Container(

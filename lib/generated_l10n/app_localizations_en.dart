@@ -1878,6 +1878,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get users_deactivate_button => 'Deactivate';
 
   @override
+  String get common_activate => 'Activate';
+
+  @override
   String get users_edit_title => 'Edit User';
 
   @override

@@ -317,7 +317,6 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final tipoRaw = (notif.tipoRaw ?? '').toLowerCase();
     final mensagem = notif.mensagem.toLowerCase();
     final titulo = notif.titulo.toLowerCase();
-    final maintenanceContext = _isMaintenanceContext('$tipoRaw $titulo $mensagem');
 
     final solicId = _normalizeEntityId(notif.solicitacaoId);
     final comentarioId = _normalizeEntityId(notif.comentarioId);
@@ -332,16 +331,6 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         arguments: agendamentoId,
       );
       debugPrint('notifications: navigating to ${isMorador ? '/responder-agendamento' : '/agendamento-detalhes'} with $agendamentoId');
-      return true;
-    }
-
-    if (maintenanceContext && solicId != null && solicId.isNotEmpty) {
-      Navigator.pushNamed(
-        context,
-        '/manutencoes-preventivas-detalhes',
-        arguments: solicId,
-      );
-      debugPrint('notifications: navigating to /manutencoes-preventivas-detalhes with $solicId');
       return true;
     }
 

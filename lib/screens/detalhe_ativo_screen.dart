@@ -65,7 +65,7 @@ class _DetalheAtivoScreenState extends State<DetalheAtivoScreen>
   late Animation<double> _cardsFade;
   late Animation<Offset> _cardsSlide;
 
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
   final ScrollController _scrollController = ScrollController();
 
   @override
@@ -125,7 +125,7 @@ class _DetalheAtivoScreenState extends State<DetalheAtivoScreen>
   }
 
   void _onScroll() {
-    setState(() => _scrollOffset = _scrollController.offset);
+    _scrollOffset.value = _scrollController.offset;
   }
 
   Future<void> _carregarDados() async {
@@ -189,6 +189,7 @@ class _DetalheAtivoScreenState extends State<DetalheAtivoScreen>
     _masterController.dispose();
     _headerController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     super.dispose();
   }
 
@@ -201,12 +202,15 @@ class _DetalheAtivoScreenState extends State<DetalheAtivoScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(
-          scrollOffset: _scrollOffset,
-          item: _item,
-          l10n: l10n,
-          onRefresh: _carregarDados,
-          onMenuSelected: _handleMenuAction,
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) => _GlassAppBar(
+            scrollOffset: value,
+            item: _item,
+            l10n: l10n,
+            onRefresh: _carregarDados,
+            onMenuSelected: _handleMenuAction,
+          ),
         ),
       ),
       body: Consumer<AuthProvider>(

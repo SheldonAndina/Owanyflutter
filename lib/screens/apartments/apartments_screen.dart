@@ -44,7 +44,20 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
   EstadoApartamento? _estadoFilter;
   bool _isGridView = true;
   bool _showExtendedStats = false;
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
+  List<Apartamento>? _filteredCache;
+  List<Apartamento>? _cachedSource;
+  int _cachedSourceLength = -1;
+  String? _cachedSourceFirstId;
+  String? _cachedSourceLastId;
+  String _cachedQuery = '';
+  String _cachedBlocoFilter = 'todos';
+  EstadoApartamento? _cachedEstadoFilter;
+  List<Apartamento>? _searchIndexSource;
+  int _searchIndexLength = -1;
+  String? _searchIndexFirstId;
+  String? _searchIndexLastId;
+  Map<String, String> _searchIndex = {};
 
   @override
   void initState() {
@@ -82,7 +95,7 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
     });
   }
 
-  Future<void> _carregarDadosComPermissao() async {
+  Future<void> _carregarDadosComPermissao({bool forceRefresh = false}) async {
     final authProvider = context.read<AuthProvider>();
     final apartamentosProvider = context.read<ApartamentosProvider>();
     final solicitacoesProvider = context.read<SolicitacoesProvider>();
@@ -95,7 +108,13 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
         AppLogger.info('Apartments', '🔒 Morador carregando APENAS apartamento: $apartamentoId');
         await Future.wait([
           apartamentosProvider.carregarApartamentoPorId(apartamentoId),
-          solicitacoesProvider.loadSolicitacoes(apartamentoId: apartamentoId, refresh: true),
+          // solicitar histórico do morador em qualquer apartamento (carregar todas as páginas)
+          solicitacoesProvider.loadSolicitacoes(
+            apartamentoId: apartamentoId,
+            refresh: forceRefresh,
+            carregarTodas: true,
+            incluirHistorico: true,
+          ),
         ]);
       } else {
         // Morador sem apartamento vinculado - não carrega nada
@@ -112,7 +131,10 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
       AppLogger.info('Apartments', '✅ Staff carregando todos os dados');
       await Future.wait([
         apartamentosProvider.carregarApartamentos(),
-        solicitacoesProvider.loadSolicitacoes(status: 'EmAndamento', refresh: true),
+        solicitacoesProvider.loadSolicitacoes(
+          refresh: forceRefresh,
+          carregarTodas: true,
+        ),
       ]);
     } else {
       // Outros roles - acesso mínimo
@@ -121,15 +143,14 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
   }
   
   void _onScroll() {
-    setState(() {
-      _scrollOffset = _scrollController.offset;
-    });
+    _scrollOffset.value = _scrollController.offset;
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     _debounce?.cancel();
     _headerAnimController.dispose();
     _statsAnimController.dispose();
@@ -141,6 +162,7 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
     _debounce = Timer(const Duration(milliseconds: 300), () {
       if (mounted) {
         HapticFeedback.selectionClick();
+        _invalidateFilteredCache();
         setState(() {});
       }
     });
@@ -161,19 +183,65 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
 
   List<Apartamento> _filtrar(List<Apartamento> lista) {
     final q = _searchController.text.toLowerCase().trim();
+    final length = lista.length;
+    final firstId = length > 0 ? lista.first.id : null;
+    final lastId = length > 0 ? lista.last.id : null;
 
-    return lista.where((a) {
+    final canUseCache =
+        identical(_cachedSource, lista) &&
+        _cachedSourceLength == length &&
+        _cachedSourceFirstId == firstId &&
+        _cachedSourceLastId == lastId &&
+        _cachedQuery == q &&
+        _cachedBlocoFilter == _blocoFilter &&
+        _cachedEstadoFilter == _estadoFilter &&
+        _filteredCache != null;
+    if (canUseCache) return _filteredCache!;
+
+    if (q.isNotEmpty &&
+        (!identical(_searchIndexSource, lista) ||
+            _searchIndexLength != length ||
+            _searchIndexFirstId != firstId ||
+            _searchIndexLastId != lastId)) {
+      _searchIndexSource = lista;
+      _searchIndexLength = length;
+      _searchIndexFirstId = firstId;
+      _searchIndexLastId = lastId;
+      _searchIndex = {
+        for (final a in lista)
+          a.id: [
+            a.nome,
+            a.numero,
+            a.bloco,
+          ].map((e) => e.toLowerCase()).join('|'),
+      };
+    }
+
+    final filtered = lista.where((a) {
       final matchBusca = q.isEmpty ||
-          a.nome.toLowerCase().contains(q) ||
-          a.numero.toLowerCase().contains(q) ||
-          a.bloco.toLowerCase().contains(q);
+          (_searchIndex[a.id] ?? '').contains(q);
 
-      final matchBloco = _blocoFilter == 'todos' || 
+      final matchBloco = _blocoFilter == 'todos' ||
           a.bloco.toLowerCase() == _blocoFilter;
       final matchEstado = _estadoFilter == null || a.estado == _estadoFilter;
 
       return matchBusca && matchBloco && matchEstado;
     }).toList();
+
+    _cachedSource = lista;
+    _cachedSourceLength = length;
+    _cachedSourceFirstId = firstId;
+    _cachedSourceLastId = lastId;
+    _cachedQuery = q;
+    _cachedBlocoFilter = _blocoFilter;
+    _cachedEstadoFilter = _estadoFilter;
+    _filteredCache = filtered;
+
+    return filtered;
+  }
+
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
   }
   
   void _showFilterModal(BuildContext context, List<String> blocos) {
@@ -189,6 +257,7 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
           setState(() {
             _blocoFilter = bloco;
             _estadoFilter = estado;
+            _invalidateFilteredCache();
           });
           HapticFeedback.mediumImpact();
         },
@@ -217,9 +286,12 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(
-          scrollOffset: _scrollOffset,
-          onSearch: () {},
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) => _GlassAppBar(
+            scrollOffset: value,
+            onSearch: () {},
+          ),
         ),
       ),
       body: Consumer<ApartamentosProvider>(
@@ -243,16 +315,16 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
           final ocupados = apartamentos.where((a) => a.estado == EstadoApartamento.Ocupado).length;
           final disponiveis = apartamentos.where((a) => a.estado == EstadoApartamento.Disponivel).length;
           
-          // Calcula apartamentos em manutenção baseado nas solicitações em andamento
+          // Calcula apartamentos em manutenção baseado nas solicitações em andamento/analise
           // (solução temporária até o backend atualizar o campo emManutencao automaticamente)
           final solicitacoesProvider = context.watch<SolicitacoesProvider>();
-          final solicitacoesEmAndamento = solicitacoesProvider.solicitacoes
-              .where((s) => s.status == 'EmAndamento')
+          final solicitacoesAtivas = solicitacoesProvider.solicitacoes
+              .where((s) => s.status == 'EmAndamento' || s.status == 'EmAnalise')
               .toList();
           
           // Contar apartamentos únicos com solicitações em andamento
           final aptosComManutencao = <String>{};
-          for (final sol in solicitacoesEmAndamento) {
+          for (final sol in solicitacoesAtivas) {
             aptosComManutencao.add('${sol.blocoApartamento}-${sol.numeroApartamento}');
           }
           final manutencao = aptosComManutencao.length;
@@ -264,7 +336,7 @@ class _ApartmentsScreenState extends State<ApartmentsScreen>
           return RefreshIndicator(
             onRefresh: () async {
               HapticFeedback.mediumImpact();
-              await provider.carregarApartamentos();
+              await _carregarDadosComPermissao(forceRefresh: true);
             },
             color: OwanyTheme.primaryOrange,
             backgroundColor: OwanyTheme.cardColor(context),
@@ -494,10 +566,11 @@ class _GlassAppBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
     
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -564,6 +637,7 @@ class _GlassAppBar extends StatelessWidget {
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),
@@ -641,32 +715,46 @@ class _PremiumDashboard extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
-                    // Main Stats Row
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        _AnimatedCircularStat(
-                          label: AppLocalizations.of(context)!.apartments_list_occupied,
-                          value: ocupados,
-                          percent: _pct(ocupados),
-                          color: OwanyTheme.adaptiveTextOverlay(context),
-                          delay: 0,
-                        ),
-                        _AnimatedCircularStat(
-                          label: AppLocalizations.of(context)!.apartments_list_available,
-                          value: disponiveis,
-                          percent: _pct(disponiveis),
-                          color: OwanyTheme.success,
-                          delay: 100,
-                        ),
-                        _AnimatedCircularStat(
-                          label: AppLocalizations.of(context)!.apartments_list_maintenance,
-                          value: manutencao,
-                          percent: _pct(manutencao),
-                          color: OwanyTheme.warning,
-                          delay: 200,
-                        ),
-                      ],
+                    // Main Stats Row (wrap on narrow screens to avoid overflow)
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isNarrow = constraints.maxWidth < 360;
+                        final stats = [
+                          _AnimatedCircularStat(
+                            label: AppLocalizations.of(context)!.apartments_list_occupied,
+                            value: ocupados,
+                            percent: _pct(ocupados),
+                            color: OwanyTheme.adaptiveTextOverlay(context),
+                            delay: 0,
+                          ),
+                          _AnimatedCircularStat(
+                            label: AppLocalizations.of(context)!.apartments_list_available,
+                            value: disponiveis,
+                            percent: _pct(disponiveis),
+                            color: OwanyTheme.success,
+                            delay: 100,
+                          ),
+                          _AnimatedCircularStat(
+                            label: AppLocalizations.of(context)!.apartments_list_maintenance,
+                            value: manutencao,
+                            percent: _pct(manutencao),
+                            color: OwanyTheme.warning,
+                            delay: 200,
+                          ),
+                        ];
+                        if (isNarrow) {
+                          return Wrap(
+                            alignment: WrapAlignment.spaceAround,
+                            spacing: 16,
+                            runSpacing: 16,
+                            children: stats,
+                          );
+                        }
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: stats,
+                        );
+                      },
                     ),
                     
                     if (showExtended) ...[
@@ -1673,7 +1761,10 @@ class _PremiumApartmentListTile extends StatelessWidget {
                       ),
                     ),
                     SizedBox(height: 4),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -1693,8 +1784,7 @@ class _PremiumApartmentListTile extends StatelessWidget {
                             ),
                           ),
                         ),
-                        if (emManutencaoAtiva) ...[
-                          SizedBox(width: 6),
+                        if (emManutencaoAtiva)
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 6,
@@ -1724,8 +1814,6 @@ class _PremiumApartmentListTile extends StatelessWidget {
                               ],
                             ),
                           ),
-                        ],
-                        SizedBox(width: 8),
                         Text(
                           AppLocalizations.of(context)!.apartments_block_label(apartamento.bloco),
                           style: TextStyle(

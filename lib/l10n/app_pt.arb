@@ -732,6 +732,7 @@
   "users_deactivate": "Desativar Usuário?",
   "users_deactivate_confirm": "Tem certeza que deseja desativar este usuário?",
   "users_deactivate_button": "Desativar",
+  "common_activate": "Ativar",
   "users_edit_title": "Editar Usuário",
   "users_update_data": "Atualizar dados do usuário",
   "users_update_info": "Edite informações básicas. O tipo de usuário é somente leitura para segurança.",

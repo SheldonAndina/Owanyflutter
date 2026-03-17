@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/models.dart';
 import '../../providers/moradores_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../theme/owany_theme.dart';
 import '../../widgets/primary_button.dart';
@@ -193,11 +194,13 @@ class _MoradorDetailScreenState extends State<MoradorDetailScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: OwanyTheme.backgroundColor(context),
-      appBar: StandardGlassAppBar(
-        title: AppLocalizations.of(context)!.morador_detail_title,
+    Widget build(BuildContext context) {
+      final authProvider = context.read<AuthProvider>();
+      final canEdit = authProvider.isStaff;
+      return Scaffold(
+        backgroundColor: OwanyTheme.backgroundColor(context),
+        appBar: StandardGlassAppBar(
+          title: AppLocalizations.of(context)!.morador_detail_title,
         icon: Icons.person_pin_circle_rounded,
         showBackButton: true,
       ),
@@ -258,14 +261,14 @@ class _MoradorDetailScreenState extends State<MoradorDetailScreen> {
             );
           }
 
-          final morador = snapshot.data!;
-          if (!_isEditing && !_didLoadName) {
-            _nomeController.text = morador.nome;
-            _didLoadName = true;
-          }
+            final morador = snapshot.data!;
+            if (!_isEditing && !_didLoadName) {
+              _nomeController.text = morador.nome;
+              _didLoadName = true;
+            }
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -365,36 +368,36 @@ class _MoradorDetailScreenState extends State<MoradorDetailScreen> {
 
                 SizedBox(height: 16),
 
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: _cardDecoration(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildLabel(AppLocalizations.of(context)!.morador_name),
-                      SizedBox(height: 8),
-                      !_isEditing
-                          ? Text(
-                              morador.nome,
-                              style: TextStyle(
-                                fontSize: 16,
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: _cardDecoration(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildLabel(AppLocalizations.of(context)!.morador_name),
+                        SizedBox(height: 8),
+                        !canEdit || !_isEditing
+                            ? Text(
+                                morador.nome,
+                                style: TextStyle(
+                                  fontSize: 16,
                                 fontWeight: FontWeight.w700,
                                 color: OwanyTheme.textPrimary(context),
                               ),
                             )
-                          : TextField(
-                              controller: _nomeController,
-                              decoration: OwanyTheme.inputDecoration(
-                                context: context,
-                                label: AppLocalizations.of(context)!.morador_name,
-                                hint: AppLocalizations.of(context)!.morador_name_hint,
-                                icon: Icons.person_outline_rounded,
-                                dark: Theme.of(context).brightness == Brightness.dark,
+                            : TextField(
+                                controller: _nomeController,
+                                decoration: OwanyTheme.inputDecoration(
+                                  context: context,
+                                  label: AppLocalizations.of(context)!.morador_name,
+                                  hint: AppLocalizations.of(context)!.morador_name_hint,
+                                  icon: Icons.person_outline_rounded,
+                                  dark: Theme.of(context).brightness == Brightness.dark,
+                                ),
                               ),
-                            ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
 
                 SizedBox(height: 12),
                 _infoRow(
@@ -412,12 +415,12 @@ class _MoradorDetailScreenState extends State<MoradorDetailScreen> {
 
                 SizedBox(height: 24),
 
-                if (_isEditing) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 48,
+                  if (canEdit && _isEditing) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 48,
                           child: ElevatedButton.icon(
                             onPressed: _isEditing ? () => _updateMorador(morador) : null,
                             style: OwanyTheme.primaryButtonStyle().copyWith(
@@ -456,62 +459,64 @@ class _MoradorDetailScreenState extends State<MoradorDetailScreen> {
                   ),
                 ],
 
-                SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: OwanyTheme.warning.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: OwanyTheme.warning.withValues(alpha: 0.25)),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: OwanyTheme.warning.withValues(alpha: 0.18),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(Icons.delete_forever_rounded, color: OwanyTheme.warning),
+                  if (canEdit) ...[
+                    SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: OwanyTheme.warning.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: OwanyTheme.warning.withValues(alpha: 0.25)),
                       ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppLocalizations.of(context)!.morador_remove,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: OwanyTheme.textPrimary(context),
-                              ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: OwanyTheme.warning.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(10),
                             ),
-                            SizedBox(height: 6),
-                            Text(
-                              AppLocalizations.of(context)!.morador_remove_warning,
-                              style: TextStyle(color: OwanyTheme.textMutedColor(context), fontSize: 12, height: 1.4),
+                            child: Icon(Icons.delete_forever_rounded, color: OwanyTheme.warning),
+                          ),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  AppLocalizations.of(context)!.morador_remove,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: OwanyTheme.textPrimary(context),
+                                  ),
+                                ),
+                                SizedBox(height: 6),
+                                Text(
+                                  AppLocalizations.of(context)!.morador_remove_warning,
+                                  style: TextStyle(color: OwanyTheme.textMutedColor(context), fontSize: 12, height: 1.4),
+                                ),
+                                SizedBox(height: 10),
+                                PrimaryButton.error(
+                                  text: AppLocalizations.of(context)!.morador_delete_button,
+                                  onPressed: _deleteMorador,
+                                  icon: Icons.delete_rounded,
+                                ),
+                              ],
                             ),
-                            SizedBox(height: 10),
-                            PrimaryButton.error(
-                              text: AppLocalizations.of(context)!.morador_delete_button,
-                              onPressed: _deleteMorador,
-                              icon: Icons.delete_rounded,
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        ),
+      );
   }
 }
 

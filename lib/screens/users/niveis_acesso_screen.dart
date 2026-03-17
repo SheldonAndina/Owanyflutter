@@ -989,17 +989,7 @@ class _NiveisAcessoScreenState extends State<NiveisAcessoScreen>
                 _mostrarPermissoesDoRole(usuario.role);
               },
             ),
-            // Só Admin pode resetar senha
-            if (isAdmin)
-              ListTile(
-                leading: const Icon(Icons.lock_reset_rounded, color: OwanyTheme.warning),
-                title: Text(_tx('Resetar Senha', 'Reset Password')),
-                subtitle: Text(_tx('Definir nova senha para o usuário', 'Set a new password for the user')),
-                onTap: () {
-                  Navigator.pop(context);
-                  _mostrarDialogResetarSenha(usuario);
-                },
-              ),
+            // Reset de senha removido: senha deve ser tratada em Configurações
             const SizedBox(height: 16),
           ],
         ),

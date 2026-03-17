@@ -298,15 +298,61 @@ class HistoricoOcupacaoResumo {
         '';
 
     // Parse IDs (critical for grouping and actions)
-    final moradorId = json['moradorId'] as String? ?? 
-        json['MoradorId'] as String? ?? 
+    final moradorId = json['moradorId'] as String? ??
+        json['MoradorId'] as String? ??
         '';
-    final apartamentoId = json['apartamentoId'] as String? ?? 
-        json['ApartamentoId'] as String? ?? 
+    final apartamentoId = json['apartamentoId'] as String? ??
+        json['ApartamentoId'] as String? ??
         '';
     final executadoPorId = json['executadoPorId'] as String? ?? 
         json['ExecutadoPorId'] as String? ?? 
         '';
+
+    // Fallbacks para payloads com objeto aninhado (morador/apartamento)
+    String nomeMoradorResolvido = nomeMorador;
+    String moradorIdResolvido = moradorId;
+    if ((nomeMoradorResolvido.isEmpty || moradorIdResolvido.isEmpty) && json['morador'] is Map) {
+      final morador = json['morador'] as Map;
+      if (moradorIdResolvido.isEmpty) {
+        moradorIdResolvido = morador['id']?.toString() ?? '';
+      }
+      if (nomeMoradorResolvido.isEmpty) {
+        final nestedNome = morador['nome']?.toString().trim() ?? '';
+        final nestedNomeCompleto = morador['nomeCompleto']?.toString().trim() ?? '';
+        final nestedNomeUsuario = morador['nomeUsuario']?.toString().trim() ?? '';
+        if (nestedNome.isNotEmpty) {
+          nomeMoradorResolvido = nestedNome;
+        } else if (nestedNomeCompleto.isNotEmpty) {
+          nomeMoradorResolvido = nestedNomeCompleto;
+        } else if (nestedNomeUsuario.isNotEmpty) {
+          nomeMoradorResolvido = nestedNomeUsuario;
+        }
+      }
+    }
+    String apartamentoIdResolvido = apartamentoId;
+    String numeroApartamentoResolvido =
+        json['numeroApartamento'] as String? ?? json['NumeroApartamento'] as String? ?? '';
+    String blocoApartamentoResolvido =
+        json['blocoApartamento'] as String? ?? json['BlocoApartamento'] as String? ?? '';
+    if ((apartamentoIdResolvido.isEmpty ||
+            numeroApartamentoResolvido.isEmpty ||
+            blocoApartamentoResolvido.isEmpty) &&
+        json['apartamento'] is Map) {
+      final apartamento = json['apartamento'] as Map;
+      if (apartamentoIdResolvido.isEmpty) {
+        apartamentoIdResolvido = apartamento['id']?.toString() ?? '';
+      }
+      if (numeroApartamentoResolvido.isEmpty) {
+        numeroApartamentoResolvido = apartamento['numero']?.toString() ??
+            apartamento['numeroApartamento']?.toString() ??
+            '';
+      }
+      if (blocoApartamentoResolvido.isEmpty) {
+        blocoApartamentoResolvido = apartamento['bloco']?.toString() ??
+            apartamento['blocoApartamento']?.toString() ??
+            '';
+      }
+    }
     
     // Parse dates
     final dataMovimentacao = tryParseBackendDateTimeToLocal(
@@ -323,14 +369,14 @@ class HistoricoOcupacaoResumo {
       tipoMovimentacao: json['tipoMovimentacao'] as String? ?? json['TipoMovimentacao'] as String? ?? 'Entrada',
       dataMovimentacao: dataMovimentacao,
       criadoEm: criadoEm,
-      moradorId: moradorId,
-      apartamentoId: apartamentoId,
+      moradorId: moradorIdResolvido,
+      apartamentoId: apartamentoIdResolvido,
       apartamentoOrigemId: json['apartamentoOrigemId'] as String? ?? json['ApartamentoOrigemId'] as String?,
       apartamentoDestinoId: json['apartamentoDestinoId'] as String? ?? json['ApartamentoDestinoId'] as String?,
       executadoPorId: executadoPorId,
-      nomeMorador: nomeMorador,
-      numeroApartamento: json['numeroApartamento'] as String? ?? json['NumeroApartamento'] as String? ?? '',
-      blocoApartamento: json['blocoApartamento'] as String? ?? json['BlocoApartamento'] as String? ?? '',
+      nomeMorador: nomeMoradorResolvido,
+      numeroApartamento: numeroApartamentoResolvido,
+      blocoApartamento: blocoApartamentoResolvido,
       numeroApartamentoOrigem: json['numeroApartamentoOrigem'] as String? ?? json['NumeroApartamentoOrigem'] as String?,
       blocoApartamentoOrigem: json['blocoApartamentoOrigem'] as String? ?? json['BlocoApartamentoOrigem'] as String?,
       numeroApartamentoDestino: json['numeroApartamentoDestino'] as String? ?? json['NumeroApartamentoDestino'] as String?,

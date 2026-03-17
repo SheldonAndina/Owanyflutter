@@ -64,7 +64,7 @@ class MoradoresProvider extends BaseProvider {
       return novoMorador;
     } catch (e) {
       AppLogger.error('MoradoresProvider', 'Erro ao criar morador: $e');
-      setError(e.toString());
+      setError(_formatError(e));
       rethrow;
     }
   }

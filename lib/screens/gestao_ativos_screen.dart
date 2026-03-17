@@ -49,7 +49,7 @@ class _GestaoAtivosScreenState extends State<GestaoAtivosScreen>
   int? _filtroStatus;
   bool _loadingQrScan = false;
   bool _showExtendedStats = false;
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
 
   @override
   void initState() {
@@ -91,15 +91,14 @@ class _GestaoAtivosScreenState extends State<GestaoAtivosScreen>
   void dispose() {
     _searchController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     _headerAnimController.dispose();
     _statsAnimController.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    setState(() {
-      _scrollOffset = _scrollController.offset;
-    });
+    _scrollOffset.value = _scrollController.offset;
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent - 200) {
       context.read<ItensProvider>().carregarMais();
@@ -131,12 +130,15 @@ class _GestaoAtivosScreenState extends State<GestaoAtivosScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(
-          scrollOffset: _scrollOffset,
-          onAdd: _showCadastrarItem,
-          onScan: _loadingQrScan ? null : _scanQrCode,
-          onRefresh: _carregarDados,
-          loadingQr: _loadingQrScan,
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) => _GlassAppBar(
+            scrollOffset: value,
+            onAdd: _showCadastrarItem,
+            onScan: _loadingQrScan ? null : _scanQrCode,
+            onRefresh: _carregarDados,
+            loadingQr: _loadingQrScan,
+          ),
         ),
       ),
       body: Consumer<AuthProvider>(

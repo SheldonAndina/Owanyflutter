@@ -32,6 +32,19 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
   String _searchQuery = '';
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
+  List<SolicitacaoListaDto>? _filteredCache;
+  List<SolicitacaoListaDto>? _cachedSource;
+  int _cachedSourceLength = -1;
+  String? _cachedSourceFirstId;
+  String? _cachedSourceLastId;
+  String _cachedFiltroStatus = 'todas';
+  String _cachedFiltroVisao = 'minhas';
+  String _cachedSearchQuery = '';
+  List<SolicitacaoListaDto>? _searchIndexSource;
+  int _searchIndexLength = -1;
+  String? _searchIndexFirstId;
+  String? _searchIndexLastId;
+  Map<String, String> _searchIndex = {};
 
   late AnimationController _headerAnimController;
   late AnimationController _pulseController;
@@ -39,7 +52,7 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
   late Animation<Offset> _headerSlideAnimation;
   late Animation<double> _pulseAnimation;
 
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
   bool _showExtendedDashboard = false;
 
   @override
@@ -71,7 +84,7 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
     );
 
     _scrollController.addListener(() {
-      setState(() => _scrollOffset = _scrollController.offset);
+      _scrollOffset.value = _scrollController.offset;
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -103,7 +116,7 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
             apartamentoId: apartamentoIdParam,
             responsavelId: responsavelIdParam,
             verTodas: verTodasParam,
-            refresh: true,
+            refresh: false,
             carregarTodas: true,
           );
 
@@ -115,12 +128,27 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
   void dispose() {
     _searchController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     _headerAnimController.dispose();
     _pulseController.dispose();
     super.dispose();
   }
 
   List<SolicitacaoListaDto> _filtrarSolicitacoes(List<SolicitacaoListaDto> lista) {
+    final length = lista.length;
+    final firstId = length > 0 ? lista.first.id : null;
+    final lastId = length > 0 ? lista.last.id : null;
+    final canUseCache =
+        identical(_cachedSource, lista) &&
+        _cachedSourceLength == length &&
+        _cachedSourceFirstId == firstId &&
+        _cachedSourceLastId == lastId &&
+        _cachedFiltroStatus == _filtroStatus &&
+        _cachedFiltroVisao == _filtroVisao &&
+        _cachedSearchQuery == _searchQuery &&
+        _filteredCache != null;
+    if (canUseCache) return _filteredCache!;
+
     var resultado = lista;
 
     // Filtro "minhas" só se aplica a funcionários (admins/síndicos sempre veem todas)
@@ -144,21 +172,47 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
     }
 
     if (_searchQuery.isNotEmpty) {
+      if (!identical(_searchIndexSource, lista) ||
+          _searchIndexLength != length ||
+          _searchIndexFirstId != firstId ||
+          _searchIndexLastId != lastId) {
+        _searchIndexSource = lista;
+        _searchIndexLength = length;
+        _searchIndexFirstId = firstId;
+        _searchIndexLastId = lastId;
+        _searchIndex = {
+          for (final s in lista)
+            s.id: [
+              s.titulo,
+              s.numeroApartamento,
+              s.blocoApartamento,
+              s.nomeUsuarioCriador,
+              s.nomeResponsavel ?? '',
+              s.tipoSolicitacaoNome ?? '',
+              s.id,
+            ].map((e) => e.toLowerCase()).join('|'),
+        };
+      }
       final q = _searchQuery.toLowerCase();
       resultado = resultado
-          .where((s) =>
-              s.titulo.toLowerCase().contains(q) ||
-              s.numeroApartamento.toLowerCase().contains(q) ||
-              s.blocoApartamento.toLowerCase().contains(q) ||
-              s.nomeUsuarioCriador.toLowerCase().contains(q) ||
-              (s.nomeResponsavel?.toLowerCase().contains(q) ?? false) ||
-              (s.tipoSolicitacaoNome?.toLowerCase().contains(q) ?? false) ||
-              s.id.toLowerCase().contains(q))
+          .where((s) => (_searchIndex[s.id] ?? '').contains(q))
           .toList();
     }
 
     resultado.sort((a, b) => b.criadoEm.compareTo(a.criadoEm));
+    _cachedSource = lista;
+    _cachedSourceLength = length;
+    _cachedSourceFirstId = firstId;
+    _cachedSourceLastId = lastId;
+    _cachedFiltroStatus = _filtroStatus;
+    _cachedFiltroVisao = _filtroVisao;
+    _cachedSearchQuery = _searchQuery;
+    _filteredCache = resultado;
     return resultado;
+  }
+
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
   }
 
   Color _corStatus(String status) {
@@ -213,7 +267,10 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(scrollOffset: _scrollOffset),
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) => _GlassAppBar(scrollOffset: value),
+        ),
       ),
       body: Consumer<SolicitacoesProvider>(
         builder: (context, provider, _) {
@@ -322,7 +379,11 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: _PremiumSearchBar(
                       controller: _searchController,
-                      onChanged: (v) => setState(() => _searchQuery = v),
+                      onChanged: (v) {
+                        _searchQuery = v;
+                        _invalidateFilteredCache();
+                        setState(() {});
+                      },
                     ),
                   ),
                 ),
@@ -339,7 +400,10 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
                       child: _VisaoToggle(
                         visaoAtual: _filtroVisao,
                         onChanged: (v) {
-                          setState(() => _filtroVisao = v);
+                          setState(() {
+                            _filtroVisao = v;
+                            _invalidateFilteredCache();
+                          });
                           HapticFeedback.selectionClick();
                           final auth = context.read<AuthProvider>();
                           String? respId;
@@ -371,7 +435,10 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
                       emAndamento: emAndamento,
                       concluidas: concluidas,
                       onChanged: (v) {
-                        setState(() => _filtroStatus = v);
+                        setState(() {
+                          _filtroStatus = v;
+                          _invalidateFilteredCache();
+                        });
                         HapticFeedback.selectionClick();
                       },
                     ),
@@ -410,6 +477,7 @@ class _SolicitacaoListaScreenState extends State<SolicitacaoListaScreen>
                                 _searchController.clear();
                                 _searchQuery = '';
                                 _filtroStatus = 'todas';
+                                _invalidateFilteredCache();
                               });
                               HapticFeedback.mediumImpact();
                             },
@@ -523,10 +591,11 @@ class _GlassAppBar extends StatelessWidget {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
     final l10n = AppLocalizations.of(context)!;
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -587,6 +656,7 @@ class _GlassAppBar extends StatelessWidget {
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),
@@ -1518,7 +1588,10 @@ class _PremiumSolicitacaoCardState extends State<_PremiumSolicitacaoCard> {
                             const SizedBox(height: 10),
 
                             // Status + attention badges
-                            Row(
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Container(
                                   padding: const EdgeInsets.symmetric(
@@ -1549,8 +1622,7 @@ class _PremiumSolicitacaoCardState extends State<_PremiumSolicitacaoCard> {
                                     ),
                                   ),
                                 ),
-                                if (widget.urgencia == 1) ...[
-                                  const SizedBox(width: 8),
+                                if (widget.urgencia == 1)
                                   Container(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 8, vertical: 5),
@@ -1580,7 +1652,6 @@ class _PremiumSolicitacaoCardState extends State<_PremiumSolicitacaoCard> {
                                       ],
                                     ),
                                   ),
-                                ],
                               ],
                             ),
                           ],

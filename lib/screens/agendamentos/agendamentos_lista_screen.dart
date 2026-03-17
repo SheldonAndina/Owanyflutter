@@ -48,7 +48,25 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
   bool _showOnlyComResponsavel = false;
   bool _showOnlyComTipo = false;
   bool _mostrarAgrupado = true;
-  bool _showFab = false;
+  final _scrollOffset = ValueNotifier<double>(0);
+  final _showFab = ValueNotifier<bool>(false);
+  final Map<String, bool> _expandedGroups = {};
+  List<AgendamentoMaintenanceDto>? _filteredCache;
+  List<AgendamentoMaintenanceDto>? _cachedSource;
+  int _cachedSourceLength = -1;
+  String? _cachedSourceFirstId;
+  String? _cachedSourceLastId;
+  String _cachedQuery = '';
+  AgendamentoQuickFilter _cachedQuickFilter = AgendamentoQuickFilter.todos;
+  _SortMode _cachedSortMode = _SortMode.prioridade;
+  bool _cachedShowOnlyWithFornecedor = false;
+  bool _cachedShowOnlyComResponsavel = false;
+  bool _cachedShowOnlyComTipo = false;
+  List<AgendamentoMaintenanceDto>? _searchIndexSource;
+  int _searchIndexLength = -1;
+  String? _searchIndexFirstId;
+  String? _searchIndexLastId;
+  Map<String, String> _searchIndex = {};
 
   // ── Animations ──
   late AnimationController _headerAnimController;
@@ -57,8 +75,6 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
   late Animation<Offset> _headerSlide;
   late Animation<double> _contentFade;
   late Animation<Offset> _contentSlide;
-
-  double _scrollOffset = 0;
 
   static final FilteringTextInputFormatter _moneyInputFormatter =
       FilteringTextInputFormatter.allow(RegExp(r'[0-9,\.]'));
@@ -175,14 +191,16 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
     _contentAnimController.dispose();
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
+    _scrollOffset.dispose();
+    _showFab.dispose();
     super.dispose();
   }
 
   void _onScroll() {
     final offset = _scrollCtrl.offset;
-    setState(() => _scrollOffset = offset);
+    _scrollOffset.value = offset;
     final show = offset > 300;
-    if (show != _showFab) setState(() => _showFab = show);
+    if (show != _showFab.value) _showFab.value = show;
   }
 
   // ── data loading ──────────────────────────────────────────────────────────
@@ -222,6 +240,41 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
   }
 
   // ── filtering & sorting ───────────────────────────────────────────────────
+
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
+  }
+
+  void _ensureSearchIndex(List<AgendamentoMaintenanceDto> source) {
+    final length = source.length;
+    final firstId = length > 0 ? source.first.id : null;
+    final lastId = length > 0 ? source.last.id : null;
+    if (identical(_searchIndexSource, source) &&
+        _searchIndexLength == length &&
+        _searchIndexFirstId == firstId &&
+        _searchIndexLastId == lastId) {
+      return;
+    }
+    _searchIndexSource = source;
+    _searchIndexLength = length;
+    _searchIndexFirstId = firstId;
+    _searchIndexLastId = lastId;
+    _searchIndex = {
+      for (final a in source)
+        a.id: [
+          a.titulo,
+          a.descricao ?? '',
+          a.numeroApartamento ?? '',
+          a.blocoApartamento ?? '',
+          a.responsavelTecnicoNome ?? '',
+          a.responsavelTecnicoId ?? '',
+          a.tipoSolicitacaoNome ?? '',
+          a.fornecedor ?? '',
+          a.status,
+          a.id,
+        ].map((e) => e.toLowerCase()).join('|'),
+    };
+  }
 
   String _normalizeFilterText(String? value) {
     return (value ?? '')
@@ -289,12 +342,8 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
   bool _isSearchMatch(AgendamentoMaintenanceDto a) {
     final query = _searchCtrl.text.trim().toLowerCase();
     if (query.isEmpty) return true;
-    final fields = [
-      a.titulo, a.descricao ?? '', a.numeroApartamento ?? '',
-      a.blocoApartamento ?? '', a.responsavelTecnicoNome ?? '',
-      a.responsavelTecnicoId ?? '', a.tipoSolicitacaoNome ?? '',
-      a.fornecedor ?? '', a.status, a.id,
-    ].map((e) => e.toLowerCase()).join('|');
+    final fields = _searchIndex[a.id];
+    if (fields == null) return false;
     return fields.contains(query);
   }
 
@@ -327,6 +376,25 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
   }
 
   List<AgendamentoMaintenanceDto> _filtered(List<AgendamentoMaintenanceDto> source) {
+    _ensureSearchIndex(source);
+    final query = _searchCtrl.text.trim().toLowerCase();
+    final length = source.length;
+    final firstId = length > 0 ? source.first.id : null;
+    final lastId = length > 0 ? source.last.id : null;
+    final canUseCache =
+        identical(_cachedSource, source) &&
+        _cachedSourceLength == length &&
+        _cachedSourceFirstId == firstId &&
+        _cachedSourceLastId == lastId &&
+        _cachedQuery == query &&
+        _cachedQuickFilter == _quickFilter &&
+        _cachedSortMode == _sortMode &&
+        _cachedShowOnlyWithFornecedor == _showOnlyWithFornecedor &&
+        _cachedShowOnlyComResponsavel == _showOnlyComResponsavel &&
+        _cachedShowOnlyComTipo == _showOnlyComTipo &&
+        _filteredCache != null;
+    if (canUseCache) return _filteredCache!;
+
     final list = source
         .where(_isSearchMatch)
         .where(_isFilterMatch)
@@ -346,6 +414,17 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
         list.sort(_sortByStatus);
         break;
     }
+    _cachedSource = source;
+    _cachedSourceLength = length;
+    _cachedSourceFirstId = firstId;
+    _cachedSourceLastId = lastId;
+    _cachedQuery = query;
+    _cachedQuickFilter = _quickFilter;
+    _cachedSortMode = _sortMode;
+    _cachedShowOnlyWithFornecedor = _showOnlyWithFornecedor;
+    _cachedShowOnlyComResponsavel = _showOnlyComResponsavel;
+    _cachedShowOnlyComTipo = _showOnlyComTipo;
+    _filteredCache = list;
     return list;
   }
 
@@ -527,7 +606,10 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
                 onTap: () {
-                  setState(() => _sortMode = mode);
+                  setState(() {
+                    _sortMode = mode;
+                    _invalidateFilteredCache();
+                  });
                   setModal(() {});
                   HapticFeedback.selectionClick();
                 },
@@ -702,17 +784,26 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
                     const SizedBox(height: 10),
                     switchTile(_tx('Com fornecedor', 'With vendor'), _tx('Apenas agendamentos com fornecedor definido', 'Only appointments with a defined vendor'),
                         _showOnlyWithFornecedor, (v) {
-                      setState(() => _showOnlyWithFornecedor = v);
+                      setState(() {
+                        _showOnlyWithFornecedor = v;
+                        _invalidateFilteredCache();
+                      });
                       setModal(() {});
                     }),
                     switchTile(_tx('Com responsável', 'With responsible technician'), _tx('Apenas com técnico responsável', 'Only with assigned technician'),
                         _showOnlyComResponsavel, (v) {
-                      setState(() => _showOnlyComResponsavel = v);
+                      setState(() {
+                        _showOnlyComResponsavel = v;
+                        _invalidateFilteredCache();
+                      });
                       setModal(() {});
                     }),
                     switchTile(_tx('Com tipo de solicitação', 'With request type'), _tx('Apenas com categoria definida', 'Only with a defined category'),
                         _showOnlyComTipo, (v) {
-                      setState(() => _showOnlyComTipo = v);
+                      setState(() {
+                        _showOnlyComTipo = v;
+                        _invalidateFilteredCache();
+                      });
                       setModal(() {});
                     }),
 
@@ -735,6 +826,7 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
                                 _showOnlyComResponsavel = false;
                                 _showOnlyComTipo = false;
                                 _sortMode = _SortMode.prioridade;
+                                _invalidateFilteredCache();
                               });
                               setModal(() {});
                             },
@@ -889,37 +981,68 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
 
   List<Widget> _buildGroupedBody(List<AgendamentoMaintenanceDto> list,
       {required bool isStaff, required bool isMorador}) {
-    final completed = list.where((a) {
-      final status = AgendamentoStatusHelper.statusKey(a.status);
-      return status.contains('concluido') || status.contains('avaliado');
-    }).toList();
-    final overdue = list.where(AgendamentoStatusHelper.isOverdue).toList();
-    final today = list.where(AgendamentoStatusHelper.isToday).toList();
-    final next = list.where(AgendamentoStatusHelper.isNext7Days).toList();
-    final others = list
-        .where((a) {
-          final status = AgendamentoStatusHelper.statusKey(a.status);
-          return !status.contains('concluido') && !status.contains('avaliado');
-        })
-        .where((a) => !AgendamentoStatusHelper.isOverdue(a))
-        .where((a) => !AgendamentoStatusHelper.isToday(a))
-        .where((a) => !AgendamentoStatusHelper.isNext7Days(a))
-        .toList();
+    String bucketKey(AgendamentoMaintenanceDto a) {
+      final key = AgendamentoStatusHelper.statusKey(a.status);
+      if (key.contains('pendente')) return 'pendente';
+      if (key.contains('aceito') || key.contains('confirmado')) return 'aceito';
+      if (key.contains('recusado')) return 'recusado';
+      if (key.contains('agendado')) return 'agendado';
+      if (key.contains('emandamento') || key.contains('execucao') || key.contains('iniciado')) return 'emandamento';
+      if (key.contains('concluido') || key.contains('avaliado')) return 'concluido';
+      if (key.contains('cancelado')) return 'cancelado';
+      return 'outros';
+    }
+
+    final Map<String, List<AgendamentoMaintenanceDto>> groups = {
+      'pendente': [],
+      'aceito': [],
+      'recusado': [],
+      'agendado': [],
+      'emandamento': [],
+      'concluido': [],
+      'cancelado': [],
+      'outros': [],
+    };
+    for (final a in list) {
+      groups[bucketKey(a)]!.add(a);
+    }
 
     final widgets = <Widget>[];
     void addSection(String title, List<AgendamentoMaintenanceDto> src, Color color) {
       if (src.isEmpty) return;
       if (widgets.isNotEmpty) widgets.add(const SizedBox(height: 16));
-      widgets.add(_buildGroupLabel(title, src.length, color));
-      widgets.add(const SizedBox(height: 10));
-      widgets.addAll(_buildCards(src, isStaff: isStaff, isMorador: isMorador));
+
+      final isExpanded = _expandedGroups[title] ?? false;
+      widgets.add(
+        InkWell(
+          onTap: () => setState(() => _expandedGroups[title] = !(isExpanded)),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(child: _buildGroupLabel(title, src.length, color)),
+              Transform.rotate(
+                angle: isExpanded ? 0 : -math.pi / 2,
+                child: Icon(Icons.chevron_left_rounded, color: OwanyTheme.textMutedColor(context)),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (isExpanded) {
+        widgets.add(const SizedBox(height: 10));
+        widgets.addAll(_buildCards(src, isStaff: isStaff, isMorador: isMorador));
+      }
     }
 
-    addSection('Urgente', overdue, OwanyTheme.error);
-    addSection('Hoje', today, OwanyTheme.warning);
-    addSection('Próximos dias', next, OwanyTheme.info);
-    addSection('Outros', others, OwanyTheme.textMutedColor(context));
-    addSection('Concluídos', completed, OwanyTheme.success);
+    addSection('Pendente aceitação', groups['pendente']!, OwanyTheme.warning);
+    addSection('Aceito', groups['aceito']!, OwanyTheme.info);
+    addSection('Recusado', groups['recusado']!, OwanyTheme.error);
+    addSection('Agendado', groups['agendado']!, OwanyTheme.primaryOrange);
+    addSection('Em andamento', groups['emandamento']!, OwanyTheme.info);
+    addSection('Concluído', groups['concluido']!, OwanyTheme.success);
+    addSection('Cancelado', groups['cancelado']!, OwanyTheme.textMutedColor(context));
+    addSection('Outros', groups['outros']!, OwanyTheme.textMutedColor(context));
     return widgets;
   }
 
@@ -1023,32 +1146,39 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(scrollOffset: _scrollOffset, l10n: l10n),
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) =>
+              _GlassAppBar(scrollOffset: value, l10n: l10n),
+        ),
       ),
-      floatingActionButton: AnimatedScale(
-        scale: _showFab ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 220),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-                colors: [OwanyTheme.primaryOrange, OwanyTheme.accent]),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: OwanyTheme.primaryOrange.withValues(alpha: 0.4),
-                blurRadius: 12, offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: FloatingActionButton.small(
-            onPressed: () => _scrollCtrl.animateTo(0,
-                duration: const Duration(milliseconds: 400),
-                curve: Curves.easeOutCubic),
-            backgroundColor: Colors.transparent,
-            foregroundColor: Colors.white,
-            elevation: 0,
-            tooltip: _tx('Voltar ao topo', 'Back to top'),
-            child: const Icon(Icons.keyboard_arrow_up_rounded),
+      floatingActionButton: ValueListenableBuilder<bool>(
+        valueListenable: _showFab,
+        builder: (_, show, __) => AnimatedScale(
+          scale: show ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 220),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [OwanyTheme.primaryOrange, OwanyTheme.accent]),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: OwanyTheme.primaryOrange.withValues(alpha: 0.4),
+                  blurRadius: 12, offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: FloatingActionButton.small(
+              onPressed: () => _scrollCtrl.animateTo(0,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic),
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              tooltip: _tx('Voltar ao topo', 'Back to top'),
+              child: const Icon(Icons.keyboard_arrow_up_rounded),
+            ),
           ),
         ),
       ),
@@ -1107,13 +1237,20 @@ class _AgendamentosListaScreenState extends State<AgendamentosListaScreen>
                           quickFilters: _quickFilters,
                           selectedFilter: _quickFilter,
                           l10n: l10n,
-                          onSearch: (_) => setState(() {}),
+                          onSearch: (_) {
+                            _invalidateFilteredCache();
+                            setState(() {});
+                          },
                           onClear: () {
                             _searchCtrl.clear();
+                            _invalidateFilteredCache();
                             setState(() {});
                           },
                           onFilterSelect: (v) {
-                            setState(() => _quickFilter = v);
+                            setState(() {
+                              _quickFilter = v;
+                              _invalidateFilteredCache();
+                            });
                             HapticFeedback.selectionClick();
                           },
                           onAdvanced: _showFiltersSheet,
@@ -1197,10 +1334,11 @@ class _GlassAppBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -1260,6 +1398,7 @@ class _GlassAppBar extends StatelessWidget {
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),

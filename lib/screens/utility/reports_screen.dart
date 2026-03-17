@@ -80,6 +80,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
   DateTime? _dataFimFiltro;
   bool _mostrarTudo = true;
   String? _statusFiltro;
+  List<SolicitacaoListaDto>? _filteredSolicitacoesCache;
+  List<SolicitacaoListaDto>? _cachedSource;
+  int _cachedSourceLength = -1;
+  String? _cachedSourceFirstId;
+  String? _cachedSourceLastId;
+  DateTime? _cachedMesSelecionado;
+  DateTime? _cachedDataInicio;
+  DateTime? _cachedDataFim;
+  bool _cachedMostrarTudo = true;
+  String? _cachedStatusFiltro;
+  _SolicitacoesResumo? _cachedResumo;
+  List<SolicitacaoListaDto>? _cachedResumoSource;
+  int _cachedResumoLength = -1;
+  String? _cachedResumoFirstId;
+  String? _cachedResumoLastId;
 
   bool get _isEn =>
       Localizations.localeOf(context).languageCode.toLowerCase().startsWith('en');
@@ -145,10 +160,36 @@ class _ReportsScreenState extends State<ReportsScreen> {
     List<SolicitacaoListaDto> solicitacoes,
     DateTimeRange? periodo,
   ) {
+    final length = solicitacoes.length;
+    final firstId = length > 0 ? solicitacoes.first.id : null;
+    final lastId = length > 0 ? solicitacoes.last.id : null;
+    final canUseCache =
+        identical(_cachedSource, solicitacoes) &&
+        _cachedSourceLength == length &&
+        _cachedSourceFirstId == firstId &&
+        _cachedSourceLastId == lastId &&
+        _cachedMesSelecionado == _mesSelecionado &&
+        _cachedDataInicio == _dataInicioFiltro &&
+        _cachedDataFim == _dataFimFiltro &&
+        _cachedMostrarTudo == _mostrarTudo &&
+        _cachedStatusFiltro == _statusFiltro &&
+        _filteredSolicitacoesCache != null;
+    if (canUseCache) return _filteredSolicitacoesCache!;
+
     final filtradas = solicitacoes
         .where((s) => _estaNoPeriodo(s.criadoEm, periodo) && _statusCorresponde(s.status))
         .toList();
     filtradas.sort((a, b) => b.criadoEm.compareTo(a.criadoEm));
+    _cachedSource = solicitacoes;
+    _cachedSourceLength = length;
+    _cachedSourceFirstId = firstId;
+    _cachedSourceLastId = lastId;
+    _cachedMesSelecionado = _mesSelecionado;
+    _cachedDataInicio = _dataInicioFiltro;
+    _cachedDataFim = _dataFimFiltro;
+    _cachedMostrarTudo = _mostrarTudo;
+    _cachedStatusFiltro = _statusFiltro;
+    _filteredSolicitacoesCache = filtradas;
     return filtradas;
   }
 
@@ -192,12 +233,32 @@ class _ReportsScreenState extends State<ReportsScreen> {
     );
   }
 
+  _SolicitacoesResumo _resumoFor(List<SolicitacaoListaDto> solicitacoes) {
+    final length = solicitacoes.length;
+    final firstId = length > 0 ? solicitacoes.first.id : null;
+    final lastId = length > 0 ? solicitacoes.last.id : null;
+    final canUseCache =
+        identical(_cachedResumoSource, solicitacoes) &&
+        _cachedResumoLength == length &&
+        _cachedResumoFirstId == firstId &&
+        _cachedResumoLastId == lastId &&
+        _cachedResumo != null;
+    if (canUseCache) return _cachedResumo!;
+    final resumo = _calcularResumoSolicitacoes(solicitacoes);
+    _cachedResumoSource = solicitacoes;
+    _cachedResumoLength = length;
+    _cachedResumoFirstId = firstId;
+    _cachedResumoLastId = lastId;
+    _cachedResumo = resumo;
+    return resumo;
+  }
+
   DashboardEstatisticas _buildStatsFiltradas(
     DashboardEstatisticas base,
     List<SolicitacaoListaDto> solicitacoesFiltradas,
     int apartamentosEmManutencao,
   ) {
-    final resumo = _calcularResumoSolicitacoes(solicitacoesFiltradas);
+    final resumo = _resumoFor(solicitacoesFiltradas);
     return DashboardEstatisticas(
       totalApartamentos: base.totalApartamentos,
       apartamentosOcupados: base.apartamentosOcupados,
@@ -245,7 +306,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
     
     dash.carregarSolicitacoesKpis(dataInicio: dataInicio, dataFim: dataFim);
     // Carregar TODAS as solicitações para métricas completas
-    context.read<SolicitacoesProvider>().loadSolicitacoes(refresh: true, carregarTodas: true);
+    context.read<SolicitacoesProvider>().loadSolicitacoes(refresh: false, carregarTodas: true);
     // Carregar áreas técnicas
     context.read<SolicitacoesProvider>().loadAreas();
   }
@@ -840,7 +901,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       physics: const NeverScrollableScrollPhysics(),
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
-      childAspectRatio: isWide ? 1.8 : 1.5,
+      childAspectRatio: isWide ? 1.8 : 1.25,
       children: [
         _buildKPICard(
           label: l10n.apartments_list_title,
@@ -1102,16 +1163,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
+                      reservedSize: 42,
                       getTitlesWidget: (value, _) {
                         final labels = items.map((e) => e.label).toList();
                         if (value.toInt() >= 0 && value.toInt() < labels.length) {
                           return Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text(
-                              labels[value.toInt()],
-                              style: TextStyle(fontSize: 11, color: OwanyTheme.textMutedColor(context)),
-                              maxLines: 2,
-                              textAlign: TextAlign.center,
+                            child: Transform.rotate(
+                              angle: -0.785398, // -45deg
+                              alignment: Alignment.topCenter,
+                              child: Text(
+                                labels[value.toInt()],
+                                style: TextStyle(fontSize: 10, color: OwanyTheme.textMutedColor(context)),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           );
                         }
@@ -1888,14 +1954,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
-                      reservedSize: 28,
+                      reservedSize: 40,
                       getTitlesWidget: (value, meta) {
                         final idx = value.toInt();
                         if (idx < 0 || idx >= data.length) return const SizedBox.shrink();
                         final label = data[idx].mes.length > 3 ? data[idx].mes.substring(0, 3) : data[idx].mes;
                         return Padding(
                           padding: const EdgeInsets.only(top: 6),
-                          child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: OwanyTheme.textMutedColor(context))),
+                          child: Transform.rotate(
+                            angle: -0.785398, // -45deg
+                            alignment: Alignment.topCenter,
+                            child: Text(
+                              label,
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: OwanyTheme.textMutedColor(context)),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                         );
                       },
                     ),
@@ -2434,15 +2509,22 @@ class _ReportsScreenState extends State<ReportsScreen> {
                         bottomTitles: AxisTitles(
                           sideTitles: SideTitles(
                             showTitles: true,
-                            reservedSize: 28,
+                            reservedSize: 40,
                             getTitlesWidget: (value, meta) {
                               final idx = value.toInt();
                               if (idx < 0 || idx >= porMes.length) return const SizedBox.shrink();
+                              final label = porMes.keys.elementAt(idx);
                               return Padding(
                                 padding: const EdgeInsets.only(top: 6),
-                                child: Text(
-                                  porMes.keys.elementAt(idx),
-                                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w500, color: OwanyTheme.textMutedColor(context)),
+                                child: Transform.rotate(
+                                  angle: -0.785398, // -45deg
+                                  alignment: Alignment.topCenter,
+                                  child: Text(
+                                    label,
+                                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w500, color: OwanyTheme.textMutedColor(context)),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               );
                             },
@@ -2494,15 +2576,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
                       }).toList(),
                     ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildLegendItem('Criadas', OwanyTheme.primaryOrange),
-                    const SizedBox(width: 24),
-                    _buildLegendItem('Concluídas', OwanyTheme.success),
-                  ],
                 ),
               ],
             ),

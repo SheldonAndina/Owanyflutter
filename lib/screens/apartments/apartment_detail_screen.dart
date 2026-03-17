@@ -61,7 +61,7 @@ class _ApartmentDetailScreenState extends State<ApartmentDetailScreen>
   _solicitacoesApartamentoCache = {};
 
   final ScrollController _scrollController = ScrollController();
-  double _scrollOffset = 0.0;
+  final _scrollOffset = ValueNotifier<double>(0.0);
   bool _isRefreshing = false;
 
   @override
@@ -105,9 +105,7 @@ class _ApartmentDetailScreenState extends State<ApartmentDetailScreen>
 
   void _setupScrollListener() {
     _scrollController.addListener(() {
-      setState(() {
-        _scrollOffset = _scrollController.offset;
-      });
+      _scrollOffset.value = _scrollController.offset;
     });
   }
 
@@ -143,6 +141,7 @@ class _ApartmentDetailScreenState extends State<ApartmentDetailScreen>
     _headerController.dispose();
     _fabController.dispose();
     _scrollController.dispose();
+    _scrollOffset.dispose();
     super.dispose();
   }
 
@@ -263,7 +262,15 @@ class _ApartmentDetailScreenState extends State<ApartmentDetailScreen>
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
                     // Compact AppBar
-                    _buildCompactAppBar(apartamento, canManage, provider),
+                    ValueListenableBuilder<double>(
+                      valueListenable: _scrollOffset,
+                      builder: (_, offset, __) => _buildCompactAppBar(
+                        apartamento,
+                        canManage,
+                        provider,
+                        scrollOffset: offset,
+                      ),
+                    ),
 
                     // Content
                     SliverToBoxAdapter(
@@ -348,9 +355,10 @@ class _ApartmentDetailScreenState extends State<ApartmentDetailScreen>
   Widget _buildCompactAppBar(
     Apartamento apartamento,
     bool canManage,
-    ApartamentosProvider provider,
-  ) {
-    final isScrolled = _scrollOffset > 20;
+    ApartamentosProvider provider, {
+    required double scrollOffset,
+  }) {
+    final isScrolled = scrollOffset > 20;
 
     return SliverAppBar(
       expandedHeight: 100,

@@ -43,7 +43,6 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
   // Estado do apartamento
   Apartamento? _apartamento;
   bool _carregandoApartamento = false;
-  String? _categoriaResolvida;
   String? _areasTecnicasResolvidas;
   String? _patrimonioResolvido;
   String? _metadataResolvedForSolicitacaoId;
@@ -87,24 +86,6 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
       }
       if (!mounted) return;
 
-      String? categoria = solicitacao.tipoSolicitacaoNome?.trim();
-      if (categoria == null || categoria.isEmpty) {
-        final tipoId = solicitacao.tipoSolicitacaoId?.trim();
-        if (tipoId != null && tipoId.isNotEmpty) {
-          final tipo = provider.tiposSolicitacao
-              .where((t) => t.id.toLowerCase() == tipoId.toLowerCase())
-              .firstOrNull;
-          if (tipo != null && tipo.nome.trim().isNotEmpty) {
-            categoria = tipo.nome.trim();
-          } else {
-            final tipoDireto = await provider.getTipoById(tipoId);
-            if (!mounted) return;
-            if (tipoDireto != null && tipoDireto.nome.trim().isNotEmpty) {
-              categoria = tipoDireto.nome.trim();
-            }
-          }
-        }
-      }
 
       final nomesAreas = solicitacao.areaTecnicaNomes
           .map((e) => e.trim())
@@ -129,21 +110,6 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
         }
       }
 
-      if ((categoria == null || categoria.isEmpty) &&
-          solicitacao.areaTecnicaIds.isNotEmpty) {
-        final tipoNomes = <String>{};
-        for (final areaId in solicitacao.areaTecnicaIds) {
-          final tipos = await provider.getTiposByArea(areaId, refresh: true);
-          if (!mounted) return;
-          for (final tipo in tipos) {
-            final nome = tipo.nome.trim();
-            if (nome.isNotEmpty) tipoNomes.add(nome);
-          }
-        }
-        if (tipoNomes.isNotEmpty) {
-          categoria = tipoNomes.join(', ');
-        }
-      }
 
       String? patrimonio = solicitacao.itemApartamentoCodigoPatrimonio?.trim();
       if ((patrimonio == null || patrimonio.isEmpty) &&
@@ -161,19 +127,16 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
         }
       }
 
-      if (!mounted) return;
-      setState(() {
-        _categoriaResolvida = (categoria != null && categoria.isNotEmpty)
-            ? categoria
-            : null;
+        if (!mounted) return;
+        setState(() {
         _areasTecnicasResolvidas = nomesAreas.isNotEmpty
-            ? nomesAreas.join(', ')
-            : null;
+          ? nomesAreas.join(', ')
+          : null;
         _patrimonioResolvido = (patrimonio != null && patrimonio.isNotEmpty)
-            ? patrimonio
-            : null;
+          ? patrimonio
+          : null;
         _metadataResolvedForSolicitacaoId = solicitacao.id;
-      });
+        });
     } finally {
       _resolvendoMetadata = false;
     }
@@ -327,9 +290,10 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
 
       showDialog(
         context: context,
-        builder: (context) => AtribuirResponsavelDialog(
+        builder: (dialogContext) => AtribuirResponsavelDialog(
           solicitacaoId: solicitacao.id,
           onSuccess: () {
+            if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               OwanyTheme.snackBar(
                 AppLocalizations.of(context)!.maintenance_detail_status_updated,
@@ -1020,6 +984,7 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
 
       // Recarregar solicitação completa
       await provider.loadSolicitacao(widget.solicitacaoId);
+      if (!mounted) return;
 
       // Gerar notificações de comentário para todos os envolvidos
       final solicitacao = provider.solicitacaoAtual;
@@ -1350,7 +1315,6 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
                       solicitacao: solicitacao,
                       formatDate: _formatDate,
                       nomeMoradorResolvido: _resolverNomeMorador(solicitacao),
-                      categoriaResolvida: _categoriaResolvida,
                       areasTecnicasResolvidas: _areasTecnicasResolvidas,
                       patrimonioResolvido: _patrimonioResolvido,
                     ),
@@ -1752,7 +1716,8 @@ class _MaintenanceDetailScreenState extends State<MaintenanceDetailScreen> {
     
     // Recarregar detalhes para atualizar lista de anexos
     await provider.loadSolicitacao(widget.solicitacaoId);
-    
+    if (!mounted) return;
+
     if (sucessos > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         OwanyTheme.snackBar(
@@ -2310,7 +2275,6 @@ class _DetailGrid extends StatelessWidget {
   final SolicitacaoDto solicitacao;
   final String Function(DateTime?) formatDate;
   final String nomeMoradorResolvido;
-  final String? categoriaResolvida;
   final String? areasTecnicasResolvidas;
   final String? patrimonioResolvido;
 
@@ -2318,7 +2282,6 @@ class _DetailGrid extends StatelessWidget {
     required this.solicitacao,
     required this.formatDate,
     required this.nomeMoradorResolvido,
-    this.categoriaResolvida,
     this.areasTecnicasResolvidas,
     this.patrimonioResolvido,
   });
@@ -2349,11 +2312,6 @@ class _DetailGrid extends StatelessWidget {
         label: l10n.maintenance_detail_responsible,
         value: solicitacao.nomeResponsavel ?? '-',
         icon: Icons.handyman_rounded,
-      ),
-      _InfoTile(
-        label: 'Categoria',
-        value: _buildCategoria(provider),
-        icon: Icons.category_rounded,
       ),
       _InfoTile(
         label: 'Área técnica',
@@ -2438,24 +2396,6 @@ class _DetailGrid extends StatelessWidget {
     return numero.isNotEmpty ? 'Nº $numero' : bloco;
   }
 
-  String _buildCategoria(SolicitacoesProvider provider) {
-    final resolved = categoriaResolvida?.trim();
-    if (resolved != null && resolved.isNotEmpty) return resolved;
-
-    final nome = solicitacao.tipoSolicitacaoNome?.trim();
-    if (nome != null && nome.isNotEmpty) return nome;
-
-    final tipoId = solicitacao.tipoSolicitacaoId?.trim();
-    if (tipoId == null || tipoId.isEmpty) return '-';
-
-    final tipo = provider.tiposSolicitacao
-        .where((t) => t.id.toLowerCase() == tipoId.toLowerCase())
-        .firstOrNull;
-    if (tipo != null && tipo.nome.trim().isNotEmpty) {
-      return tipo.nome.trim();
-    }
-    return tipoId;
-  }
 
   String _buildAreasTecnicas(SolicitacoesProvider provider) {
     final resolvedAreas = areasTecnicasResolvidas?.trim();

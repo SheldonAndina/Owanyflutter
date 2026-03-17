@@ -121,50 +121,6 @@ class _EditUserScreenState extends State<EditUserScreen> {
     }
   }
 
-  Future<void> _resetarSenha() async {
-    final l10n = AppLocalizations.of(context)!;
-    final confirma = await showDialog<bool>(
-      context: context,
-      builder: (context) => ThemedAlertDialog(
-        title: Text(l10n.users_reset_confirm),
-        content: Text(l10n.users_reset_description),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(l10n.common_cancel)),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: OwanyTheme.warning),
-            child: Text(l10n.common_confirm),
-          ),
-        ],
-      ),
-    );
-
-    if (confirma != true || !mounted) return;
-
-    setState(() => _isLoading = true);
-
-    try {
-      if (_nomeLogin == null || _nomeLogin!.trim().isEmpty) {
-        throw Exception(AppLocalizations.of(context)!.users_error_login_name_not_found);
-      }
-      // Chamar endpoint de reset de senha
-      await _apiService.solicitarReset(_nomeLogin!.trim());
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(OwanyTheme.snackBar(AppLocalizations.of(context)!.users_reset_sent, type: SnackBarType.success));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          OwanyTheme.snackBar('${AppLocalizations.of(context)!.users_error_reset}: $e', type: SnackBarType.error),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
   Future<void> _desativarUsuario() async {
     final l10n = AppLocalizations.of(context)!;
     final confirma = await showDialog<bool>(
@@ -574,23 +530,6 @@ class _EditUserScreenState extends State<EditUserScreen> {
                         SizedBox(height: 12),
                         Row(
                           children: [
-                            Expanded(
-                              child: SizedBox(
-                                height: 42,
-                                child: ElevatedButton.icon(
-                                  onPressed: _isLoading ? null : _resetarSenha,
-                                  icon: Icon(Icons.vpn_key_rounded, size: 18),
-                                  label: Text(AppLocalizations.of(context)!.users_reset_password),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: OwanyTheme.warning,
-                                    foregroundColor: OwanyTheme.adaptiveTextOverlay(context),
-                                    elevation: 0,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            SizedBox(width: 10),
                             Expanded(
                               child: SizedBox(
                                 height: 42,

@@ -101,6 +101,17 @@ class PatrimonioDeepLink {
     final value = raw.trim();
     if (value.isEmpty) return null;
 
+    final inlineMatch = RegExp(
+      r'^(patrimonio|patrimonios)[:\s]+(.+)$',
+      caseSensitive: false,
+    ).firstMatch(value);
+    if (inlineMatch != null) {
+      final code = inlineMatch.group(2)?.trim();
+      if (code != null && code.isNotEmpty) {
+        return code;
+      }
+    }
+
     final uri = Uri.tryParse(value);
     if (uri != null) {
       final fromUri = extractCodigoFromUri(uri);
@@ -115,13 +126,19 @@ class PatrimonioDeepLink {
     final tokens = value
         .split(RegExp(r'\s+'))
         .where((e) => e.trim().isNotEmpty);
-    for (final token in tokens) {
+    final tokenList = tokens.toList();
+    for (var i = 0; i < tokenList.length; i++) {
+      final token = tokenList[i];
       final tokenUri = Uri.tryParse(token);
       if (tokenUri != null) {
         final fromToken = extractCodigoFromUri(tokenUri);
         if (fromToken != null && fromToken.isNotEmpty) {
           return fromToken;
         }
+      }
+      if (_isPatrimonioSegment(token) && i + 1 < tokenList.length) {
+        final next = tokenList[i + 1].trim();
+        if (next.isNotEmpty) return next;
       }
     }
 

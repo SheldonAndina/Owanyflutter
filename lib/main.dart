@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'generated_l10n/app_localizations.dart';
 import 'theme/owany_theme.dart';
@@ -26,6 +28,7 @@ import 'providers/language_provider.dart';
 import 'providers/ativos_provider.dart';
 import 'providers/itens_provider.dart';
 import 'services/api_service.dart';
+import 'services/fcm_service.dart';
 import 'services/notification_navigation_service.dart';
 import 'services/solicitacoes_service.dart';
 import 'screens/utility/manage_request_types_screen.dart';
@@ -92,6 +95,14 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:app_links/app_links.dart';
 import 'dart:io' show Platform;
 
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {
+    // Ignore: initialization errors will be handled on foreground.
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -121,6 +132,17 @@ void main() async {
     ),
   );
 
+  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    try {
+      await Firebase.initializeApp();
+      FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler,
+      );
+    } catch (_) {
+      // Firebase config might be missing; keep app running.
+    }
+  }
+
   final apiService = ApiService();
   await apiService.loadToken();
 
@@ -143,6 +165,7 @@ class _OwanyAppState extends State<OwanyApp> {
   late AuthProvider _authProvider;
   late ThemeProvider _themeProvider;
   late LanguageProvider _languageProvider;
+  final FcmService _fcmService = FcmService();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   bool _isInitialized = false;
   AppLinks? _appLinks;
@@ -183,6 +206,7 @@ class _OwanyAppState extends State<OwanyApp> {
     await _languageProvider.loadIdioma();
     await _themeProvider.loadThemeMode();
     await _authProvider.init();
+    await _fcmService.initialize();
     if (mounted) {
       setState(() {
         _isInitialized = true;
@@ -246,6 +270,7 @@ class _OwanyAppState extends State<OwanyApp> {
   void _handleAuthChanged() {
     _tryNavigateToPendingPatrimonio();
     _notificationNavigationService.tryProcessPending();
+    _fcmService.refreshTokenRegistration();
   }
 
   void _tryNavigateToPendingPatrimonio() {
@@ -579,6 +604,7 @@ class _OwanyAppState extends State<OwanyApp> {
     final isAdmin = userType == UsuarioTipo.Administrador;
     final isSindico = userType == UsuarioTipo.Sindico;
     final isFuncionario = userType == UsuarioTipo.Funcionario;
+    final isPortaria = userType == UsuarioTipo.Portaria;
     final isVisitante = userType == UsuarioTipo.Visitante;
 
     final isGestor = isAdmin || isSindico;
@@ -656,11 +682,17 @@ class _OwanyAppState extends State<OwanyApp> {
         child: _buildAcessoNegadoScreen(context, 'Funcionário'),
       );
     }
-    // Moradores — view (Admin/Sindico/Func conforme API spec)
+    // Moradores — view (Admin/Síndico/Func/Portaria)
     if (rotasMoradoresView.any((r) => settings.name?.startsWith(r) ?? false) &&
-        !isStaff) {
+        !(isStaff || isPortaria)) {
       return MainScaffold(
-        child: _buildAcessoNegadoScreen(context, 'Funcionário'),
+        child: _buildAcessoNegadoScreen(context, 'Funcionário ou Portaria'),
+      );
+    }
+    // Apartamentos — portaria não pode acessar
+    if (settings.name?.startsWith('/apartamentos') == true && isPortaria) {
+      return MainScaffold(
+        child: _buildAcessoNegadoScreen(context, 'Morador ou Staff'),
       );
     }
     // Moradores — criar (Admin/Síndico conforme API spec)
@@ -857,7 +889,7 @@ class _OwanyAppState extends State<OwanyApp> {
       // Manutenções Preventivas/Gerais
       case '/manutencoes-preventivas':
       case '/manutencoes': // Nova rota unificada
-        screen = const ManutencaoPreventivalisaScreen();
+        screen = const ManutencaoPreventivaListaScreen();
         break;
       case '/manutencoes-preventivas-alertas':
       case '/manutencao-alertas': // Nova rota
@@ -1258,10 +1290,9 @@ class _MainScaffoldState extends State<MainScaffold> {
 
     // Permissões por nível
     final isGestor = isAdmin || isSindico; // Pode gerenciar tudo
-    final isStaff =
-        isAdmin || isSindico || isFuncionario; // Pode ver mais coisas
-    final podeVerTudo =
-        isAdmin || isSindico || isFuncionario || isPortaria; // Acesso amplo
+      final isStaff =
+          isAdmin || isSindico || isFuncionario; // Pode ver mais coisas
+      final podeVerTudo = isAdmin || isSindico || isFuncionario;
 
     final solicitacoesProvider = context.watch<SolicitacoesProvider>();
     final notificacoesProvider = context.watch<NotificacoesProvider>();
@@ -1298,13 +1329,13 @@ class _MainScaffoldState extends State<MainScaffold> {
                     route: '/dashboard',
                     isSelected: currentRoute == '/dashboard',
                   ),
-                  // Solicitações — Admin/Síndico/Func veem todas; Morador vê só as suas
-                  if (isStaff)
-                    _DrawerItem(
-                      icon: Icons.build_rounded,
-                      title: l10n.dashboard_maintenance,
-                      route: '/solicitacoes',
-                      isSelected: currentRoute.contains('solicitacoes'),
+                    // Solicitações — Admin/Síndico/Func veem todas; Morador vê só as suas
+                    if (isStaff)
+                      _DrawerItem(
+                        icon: Icons.build_rounded,
+                        title: l10n.dashboard_maintenance,
+                        route: '/solicitacoes',
+                        isSelected: currentRoute.contains('solicitacoes'),
                       badge: (isStaff && pendentes > 0)
                           ? (pendentes > 9 ? '9+' : '$pendentes')
                           : null,
@@ -1317,13 +1348,13 @@ class _MainScaffoldState extends State<MainScaffold> {
                       route: '/solicitacoes',
                       isSelected: currentRoute.contains('solicitacoes'),
                     ),
-                  // Apartamentos — Admin/Síndico/Func/Portaria veem lista; Morador vê "Meu Apartamento"
-                  if (podeVerTudo)
-                    _DrawerItem(
-                      icon: Icons.apartment_rounded,
-                      title: l10n.apartments_list_title,
-                      route: '/apartamentos',
-                      isSelected: currentRoute.contains('apartamentos'),
+                    // Apartamentos — Admin/Síndico/Func veem lista; Morador vê "Meu Apartamento"
+                    if (podeVerTudo)
+                      _DrawerItem(
+                        icon: Icons.apartment_rounded,
+                        title: l10n.apartments_list_title,
+                        route: '/apartamentos',
+                        isSelected: currentRoute.contains('apartamentos'),
                     ),
                   if (userType == UsuarioTipo.Morador)
                     _DrawerItem(
@@ -1399,21 +1430,35 @@ class _MainScaffoldState extends State<MainScaffold> {
                       isSelected: currentRoute == '/manage_request_types',
                     ),
                   ],
-                  // Gestão de Moradores — Admin/Síndico/Func (NÃO Portaria)
-                  if (isStaff) ...[
-                    SizedBox(height: 20),
-                    _DrawerSectionLabel(
-                      text: l10n.drawer_resident_management,
-                      icon: Icons.groups_rounded,
-                    ),
+                    // Gestão de Moradores — Admin/Síndico/Func
+                    if (isStaff) ...[
+                      SizedBox(height: 20),
+                      _DrawerSectionLabel(
+                        text: l10n.drawer_resident_management,
+                        icon: Icons.groups_rounded,
+                      ),
                     SizedBox(height: 8),
-                    _DrawerItem(
-                      icon: Icons.group_rounded,
-                      title: l10n.common_residents,
-                      route: '/moradores',
-                      isSelected: currentRoute.contains('moradores'),
-                    ),
-                  ],
+                      _DrawerItem(
+                        icon: Icons.group_rounded,
+                        title: l10n.common_residents,
+                        route: '/moradores',
+                        isSelected: currentRoute.contains('moradores'),
+                      ),
+                    ],
+                    if (isPortaria) ...[
+                      SizedBox(height: 20),
+                      _DrawerSectionLabel(
+                        text: l10n.drawer_resident_management,
+                        icon: Icons.groups_rounded,
+                      ),
+                      SizedBox(height: 8),
+                      _DrawerItem(
+                        icon: Icons.group_rounded,
+                        title: l10n.common_residents,
+                        route: '/moradores',
+                        isSelected: currentRoute.contains('moradores'),
+                      ),
+                    ],
                   SizedBox(height: 24),
                   Divider(
                     color: Colors.grey.withValues(alpha: 0.2),
@@ -1458,6 +1503,8 @@ class _MainScaffoldState extends State<MainScaffold> {
   /// Bottom Navigation - Barra de navegação inferior suave e minimalista
   Widget _buildModernBottomNav(BuildContext context) {
     final currentRoute = ModalRoute.of(context)?.settings.name ?? '/dashboard';
+    final authProvider = context.read<AuthProvider>();
+    final isPortaria = authProvider.usuarioAtual?.tipo == UsuarioTipo.Portaria;
     final currentIndex = _getCurrentNavIndex(currentRoute);
 
     return Container(
@@ -1478,40 +1525,61 @@ class _MainScaffoldState extends State<MainScaffold> {
           child: Builder(
             builder: (ctx) {
               final l10n = AppLocalizations.of(ctx)!;
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _NavItem(
-                    icon: Icons.home_rounded,
-                    label: l10n.nav_home,
-                    isSelected: currentIndex == 0,
-                    onTap: () => _navigateToRoute(context, '/dashboard'),
-                  ),
-                  _NavItem(
-                    icon: Icons.build_circle_rounded,
-                    label: l10n.nav_services,
-                    isSelected: currentIndex == 1,
-                    onTap: () => _navigateToRoute(context, '/solicitacoes'),
-                  ),
-                  _NavItem(
-                    icon: Icons.apartment_rounded,
-                    label: l10n.nav_properties,
-                    isSelected: currentIndex == 2,
-                    onTap: () => _navigateToRoute(context, '/apartamentos'),
-                  ),
-                  _NavItem(
-                    icon: Icons.person_rounded,
-                    label: l10n.nav_profile,
-                    isSelected: currentIndex == 3,
-                    onTap: () => _navigateToRoute(context, '/perfil'),
-                  ),
-                ],
-              );
-            },
+                if (isPortaria) {
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _NavItem(
+                        icon: Icons.home_rounded,
+                        label: l10n.nav_home,
+                        isSelected: currentRoute == '/dashboard',
+                        onTap: () => _navigateToRoute(context, '/dashboard'),
+                      ),
+                      _NavItem(
+                        icon: Icons.person_rounded,
+                        label: l10n.nav_profile,
+                        isSelected: currentRoute.contains('perfil') ||
+                            currentRoute.contains('configuracoes'),
+                        onTap: () => _navigateToRoute(context, '/perfil'),
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _NavItem(
+                      icon: Icons.home_rounded,
+                      label: l10n.nav_home,
+                      isSelected: currentIndex == 0,
+                      onTap: () => _navigateToRoute(context, '/dashboard'),
+                    ),
+                    _NavItem(
+                      icon: Icons.build_circle_rounded,
+                      label: l10n.nav_services,
+                      isSelected: currentIndex == 1,
+                      onTap: () => _navigateToRoute(context, '/solicitacoes'),
+                    ),
+                    _NavItem(
+                      icon: Icons.apartment_rounded,
+                      label: l10n.nav_properties,
+                      isSelected: currentIndex == 2,
+                      onTap: () => _navigateToRoute(context, '/apartamentos'),
+                    ),
+                    _NavItem(
+                      icon: Icons.person_rounded,
+                      label: l10n.nav_profile,
+                      isSelected: currentIndex == 3,
+                      onTap: () => _navigateToRoute(context, '/perfil'),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
-      ),
-    );
+      );
   }
 
   /// Determina o índice ativo da navegação baseado na rota

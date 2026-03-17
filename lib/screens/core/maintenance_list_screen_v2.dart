@@ -40,9 +40,23 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
   // ── state ──────────────────────────────────────────────────────────────────
   String? _statusFilter;
   bool _apenasMinhas = false;
-  double _scrollOffset = 0;
+  final _scrollOffset = ValueNotifier<double>(0);
   String _searchQuery = '';
   final _searchController = TextEditingController();
+  List<SolicitacaoListaDto>? _filteredCache;
+  List<SolicitacaoListaDto>? _cachedSource;
+  int _cachedSourceLength = -1;
+  String? _cachedSourceFirstId;
+  String? _cachedSourceLastId;
+  String _cachedSearchQuery = '';
+  List<SolicitacaoListaDto>? _searchIndexSource;
+  int _searchIndexLength = -1;
+  String? _searchIndexFirstId;
+  String? _searchIndexLastId;
+  Map<String, String> _searchIndex = {};
+
+  // Controla quais grupos (por status) estão expandidos
+  final Map<String, bool> _expandedStatus = {};
 
   final _scrollController = ScrollController();
   late SolicitacoesProvider _provider;
@@ -91,6 +105,7 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _scrollOffset.dispose();
     _searchController.dispose();
     _headerAnimController.dispose();
     _pulseController.dispose();
@@ -98,7 +113,7 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
   }
 
   void _onScroll() {
-    setState(() => _scrollOffset = _scrollController.offset);
+    _scrollOffset.value = _scrollController.offset;
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent - 500) {
       if (_provider.hasNextPage && !_provider.isLoading) {
@@ -107,7 +122,11 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
     }
   }
 
-  Future<void> _carregarSolicitacoesComPermissao() async {
+  void _invalidateFilteredCache() {
+    _filteredCache = null;
+  }
+
+  Future<void> _carregarSolicitacoesComPermissao({bool forceRefresh = false}) async {
     final auth = context.read<AuthProvider>();
     if (auth.isVisitante || auth.isPortaria) {
       _provider.limparDados();
@@ -119,7 +138,7 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
         await _provider.loadSolicitacoes(
           apartamentoId: id,
           verTodas: false,
-          refresh: true,
+          refresh: forceRefresh,
           carregarTodas: true,
         );
       } else {
@@ -129,13 +148,13 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
       await _provider.loadSolicitacoes(
         responsavelId: auth.usuarioAtual?.id,
         verTodas: false,
-        refresh: true,
+        refresh: forceRefresh,
         carregarTodas: true,
       );
     } else if (auth.isStaff) {
       await _provider.loadSolicitacoes(
         verTodas: true,
-        refresh: true,
+        refresh: forceRefresh,
         carregarTodas: true,
       );
     } else {
@@ -145,6 +164,7 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
 
   void _toggleMinhasSolicitacoes(bool value) {
     setState(() => _apenasMinhas = value);
+    _invalidateFilteredCache();
     HapticFeedback.selectionClick();
     final auth = context.read<AuthProvider>();
     if (value) {
@@ -169,6 +189,7 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
 
   void _applyStatusFilter(String? status) {
     setState(() => _statusFilter = status);
+    _invalidateFilteredCache();
     HapticFeedback.selectionClick();
     final auth = context.read<AuthProvider>();
     _provider.loadSolicitacoes(
@@ -296,9 +317,14 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(120),
-        child: _GlassAppBar(
-          scrollOffset: _scrollOffset,
-          onExport: context.read<AuthProvider>().isStaff ? _exportarSolicitacoes : null,
+        child: ValueListenableBuilder<double>(
+          valueListenable: _scrollOffset,
+          builder: (_, value, __) => _GlassAppBar(
+            scrollOffset: value,
+            onExport: context.read<AuthProvider>().isStaff
+                ? _exportarSolicitacoes
+                : null,
+          ),
         ),
       ),
       body: Consumer<SolicitacoesProvider>(
@@ -314,20 +340,57 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
           }
 
           final listaCompleta = provider.solicitacoes;
-          // Aplicar busca textual local
-          final lista = _searchQuery.isEmpty
-              ? listaCompleta
-              : listaCompleta.where((s) {
-                  final q = _searchQuery.toLowerCase();
-                  return (s.titulo.toLowerCase().contains(q)) ||
-                      (s.status.toLowerCase().contains(q)) ||
-                      (s.numeroApartamento.toLowerCase().contains(q)) ||
-                      (s.blocoApartamento.toLowerCase().contains(q)) ||
-                      (s.nomeUsuarioCriador.toLowerCase().contains(q)) ||
-                      (s.nomeResponsavel?.toLowerCase().contains(q) ?? false) ||
-                      (s.tipoSolicitacaoNome?.toLowerCase().contains(q) ?? false) ||
-                      (s.id.toLowerCase().contains(q));
-                }).toList();
+          final length = listaCompleta.length;
+          final firstId = length > 0 ? listaCompleta.first.id : null;
+          final lastId = length > 0 ? listaCompleta.last.id : null;
+          // Aplicar busca textual local (com cache)
+          final canUseCache =
+              identical(_cachedSource, listaCompleta) &&
+              _cachedSourceLength == length &&
+              _cachedSourceFirstId == firstId &&
+              _cachedSourceLastId == lastId &&
+              _cachedSearchQuery == _searchQuery &&
+              _filteredCache != null;
+          final lista = canUseCache
+              ? _filteredCache!
+              : _searchQuery.isEmpty
+                  ? listaCompleta
+                  : (() {
+                      if (!identical(_searchIndexSource, listaCompleta) ||
+                          _searchIndexLength != length ||
+                          _searchIndexFirstId != firstId ||
+                          _searchIndexLastId != lastId) {
+                        _searchIndexSource = listaCompleta;
+                        _searchIndexLength = length;
+                        _searchIndexFirstId = firstId;
+                        _searchIndexLastId = lastId;
+                        _searchIndex = {
+                          for (final s in listaCompleta)
+                            s.id: [
+                              s.titulo,
+                              s.status,
+                              s.numeroApartamento,
+                              s.blocoApartamento,
+                              s.nomeUsuarioCriador,
+                              s.nomeResponsavel ?? '',
+                              s.tipoSolicitacaoNome ?? '',
+                              s.id,
+                            ].map((e) => e.toLowerCase()).join('|'),
+                        };
+                      }
+                      final q = _searchQuery.toLowerCase();
+                      return listaCompleta
+                          .where((s) => (_searchIndex[s.id] ?? '').contains(q))
+                          .toList();
+                    })();
+          if (!canUseCache) {
+            _cachedSource = listaCompleta;
+            _cachedSourceLength = length;
+            _cachedSourceFirstId = firstId;
+            _cachedSourceLastId = lastId;
+            _cachedSearchQuery = _searchQuery;
+            _filteredCache = lista;
+          }
           final pendentes = lista.where((s) => s.status == 'Pendente').length;
           final emAndamento = lista
               .where((s) => s.status == 'EmAndamento')
@@ -347,7 +410,7 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
           return RefreshIndicator(
             onRefresh: () async {
               HapticFeedback.mediumImpact();
-              await _carregarSolicitacoesComPermissao();
+              await _carregarSolicitacoesComPermissao(forceRefresh: true);
             },
             color: OwanyTheme.primaryOrange,
             backgroundColor: OwanyTheme.cardColor(context),
@@ -395,50 +458,37 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
                       onToggleMinhas: _toggleMinhasSolicitacoes,
                       total: lista.length,
                       searchController: _searchController,
-                      onSearchChanged: (q) => setState(() => _searchQuery = q),
+                      onSearchChanged: (q) {
+                        _searchQuery = q;
+                        _invalidateFilteredCache();
+                        setState(() {});
+                      },
                     ),
                   ),
                 ),
 
                 const SliverToBoxAdapter(child: SizedBox(height: 16)),
 
-                // ── List ──
+                // ── Lista agrupada por status com cabeçalhos expansíveis ──
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   sliver: SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        if (index == lista.length) {
-                          return _buildLoadingFooter();
-                        }
-                        final sol = lista[index];
-                        return TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0.0, end: 1.0),
-                          duration: Duration(milliseconds: 220 + (index * 35).clamp(0, 400)),
-                          curve: Curves.easeOutCubic,
-                          builder: (_, value, child) {
-                            final c = value.clamp(0.0, 1.0);
-                            return Transform.translate(
-                              offset: Offset(0, 22 * (1 - value)),
-                              child: Opacity(opacity: c, child: child),
-                            );
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 14),
-                            child: _PremiumSolicitacaoCard(
-                              solicitacao: sol,
-                              statusColor: _statusColor(sol.status),
-                              statusIcon: _statusIcon(sol.status),
-                              statusLabel: _statusLabel(sol.status),
-                              isOverdue: _isOverdue(sol),
-                              dateLabel: _formatDate(sol.criadoEm),
-                              pulseAnimation: _pulseAnimation,
-                            ),
-                          ),
-                        );
-                      },
-                      childCount: lista.length + (provider.hasNextPage ? 1 : 0),
-                    ),
+                    delegate: SliverChildListDelegate([
+                      // Para cada status definido abaixo, renderizamos um bloco
+                      for (final status in [
+                        'Pendente',
+                        'EmAndamento',
+                        'EmAnalise',
+                        'Aguardando',
+                        'Concluido',
+                        'Cancelado',
+                        'Rejeitado',
+                      ])
+                        _buildStatusGroup(status, lista),
+
+                      // Footer de carregamento (após os grupos)
+                      if (provider.hasNextPage) _buildLoadingFooter(),
+                    ]),
                   ),
                 ),
 
@@ -448,6 +498,63 @@ class _MaintenanceListScreenV2State extends State<MaintenanceListScreenV2>
           );
         },
       ),
+    );
+  }
+
+  // Renderiza um bloco de solicitações para um `status` específico, com
+  // cabeçalho que permite expandir/colapsar.
+  Widget _buildStatusGroup(String status, List<SolicitacaoListaDto> lista) {
+    final items = lista.where((s) => s.status == status).toList();
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    final isExpanded = _expandedStatus[status] ?? false;
+    final color = _statusColor(status);
+    final label = _statusLabel(status);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expandedStatus[status] = !isExpanded),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(children: [
+                  Icon(_statusIcon(status), color: color, size: 18),
+                  const SizedBox(width: 10),
+                  Text('$label', style: TextStyle(fontWeight: FontWeight.w700, color: color)),
+                  const SizedBox(width: 8),
+                  Text('(${items.length})', style: TextStyle(color: OwanyTheme.textMuted)),
+                ]),
+                Transform.rotate(
+                  angle: isExpanded ? 0 : -math.pi / 2,
+                  child: Icon(Icons.chevron_left_rounded, color: OwanyTheme.textMuted),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (isExpanded)
+          ...items.map((sol) => Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _PremiumSolicitacaoCard(
+                  solicitacao: sol,
+                  statusColor: _statusColor(sol.status),
+                  statusIcon: _statusIcon(sol.status),
+                  statusLabel: _statusLabel(sol.status),
+                  isOverdue: _isOverdue(sol),
+                  dateLabel: _formatDate(sol.criadoEm),
+                  pulseAnimation: _pulseAnimation,
+                ),
+              )),
+      ],
     );
   }
 
@@ -570,10 +677,11 @@ class _GlassAppBar extends StatelessWidget {
     final opacity = (scrollOffset / 100).clamp(0.0, 1.0);
     final l10n = AppLocalizations.of(context)!;
 
-    return ClipRRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
+    return RepaintBoundary(
+      child: ClipRRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -664,6 +772,7 @@ class _GlassAppBar extends StatelessWidget {
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),
@@ -1557,13 +1666,15 @@ class _PremiumSolicitacaoCardState extends State<_PremiumSolicitacaoCard> {
                           ),
 
                           // ── Row 4: date + counters + arrow ──
-                          Row(
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Icon(Icons.access_time_rounded,
                                   size: 13,
                                   color: OwanyTheme.textMutedColor(context)
                                       .withValues(alpha: 0.6)),
-                              const SizedBox(width: 4),
                               Text(
                                 widget.dateLabel,
                                 style: TextStyle(
@@ -1572,22 +1683,18 @@ class _PremiumSolicitacaoCardState extends State<_PremiumSolicitacaoCard> {
                                       .withValues(alpha: 0.7),
                                 ),
                               ),
-                              const Spacer(),
-                              if (sol.quantidadeComentarios > 0) ...[
+                              if (sol.quantidadeComentarios > 0)
                                 _CounterBadge(
                                     icon: Icons.chat_bubble_outline_rounded,
                                     count: sol.quantidadeComentarios),
-                                const SizedBox(width: 10),
-                              ],
-                              if (sol.quantidadeAnexos > 0) ...[
+                              if (sol.quantidadeAnexos > 0)
                                 _CounterBadge(
                                     icon: Icons.attach_file_rounded,
                                     count: sol.quantidadeAnexos),
-                                const SizedBox(width: 10),
-                              ],
                               Icon(Icons.chevron_right_rounded,
                                   size: 20,
-                                  color: OwanyTheme.textMutedColor(context).withValues(alpha: 0.5)),
+                                  color: OwanyTheme.textMutedColor(context)
+                                      .withValues(alpha: 0.5)),
                             ],
                           ),
                         ],
@@ -1646,26 +1753,39 @@ class _DeadlineBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dateStr =
-        '${prazo.day.toString().padLeft(2, '0')}/${prazo.month.toString().padLeft(2, '0')}';
-    final c = atrasada ? OwanyTheme.error : OwanyTheme.textMutedColor(context);
+    final now = DateTime.now();
+    final diff = now.difference(prazo);
+    final isSoon = !atrasada && prazo.isAfter(now) && prazo.difference(now).inHours <= 24;
+    final color = atrasada ? OwanyTheme.error : (isSoon ? OwanyTheme.warning : OwanyTheme.textMutedColor(context));
+    final label = atrasada
+        ? 'Atrasada — ${_relativeFromDiff(diff)}'
+        : (isSoon ? 'Prazo hoje' : '${prazo.day.toString().padLeft(2, '0')}/${prazo.month.toString().padLeft(2, '0')}');
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(7),
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.event_rounded, size: 12, color: c.withValues(alpha: 0.7)),
-          const SizedBox(width: 4),
-          Text(dateStr,
-              style: TextStyle(
-                  fontSize: 11, fontWeight: FontWeight.w500, color: c)),
+          Icon(atrasada ? Icons.error_outline_rounded : Icons.event_rounded,
+              size: 14, color: color.withValues(alpha: 0.95)),
+          const SizedBox(width: 6),
+          Text(label,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
         ],
       ),
     );
+  }
+
+  String _relativeFromDiff(Duration diff) {
+    if (diff.inDays >= 1) return '${diff.inDays} dias atrás';
+    if (diff.inHours >= 1) return '${diff.inHours}h atrás';
+    if (diff.inMinutes >= 1) return '${diff.inMinutes}m atrás';
+    return 'agora';
   }
 }
 
