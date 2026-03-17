@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../utils/log_shim.dart';
+import '../../utils/patrimonio_deep_link.dart';
 import 'package:provider/provider.dart';
 
 import '../../generated_l10n/app_localizations.dart';
@@ -75,6 +76,48 @@ class _ManageApartmentItemsScreenState
 
   void _loadItems() {
     _itemsFuture = _apiService.getItensApartamento(widget.apartamentoId);
+  }
+
+  Future<void> _scanQrCode() async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final scanned = await Navigator.pushNamed(context, '/qr-scan');
+      if (scanned is! String || scanned.trim().isEmpty) return;
+
+      final codigo = PatrimonioDeepLink.extractCodigo(
+        scanned,
+        allowStandaloneCode: true,
+      )?.trim();
+      if (codigo == null || codigo.isEmpty) return;
+
+      // Ensure we have latest apartment items
+      final items = await _apiService.getItensApartamento(widget.apartamentoId);
+      ItemApartamento? match;
+      for (final it in items) {
+        if ((it.codigoPatrimonio ?? '').trim() == codigo) {
+          match = it;
+          break;
+        }
+      }
+
+      if (!mounted) return;
+
+      if (match != null) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => DetalheAtivoScreen(itemId: match.id)),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${l10n.assets_no_items_loaded}: $codigo')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${l10n.assets_consult_fail}: $e')),
+      );
+    }
   }
 
   @override
@@ -1097,6 +1140,11 @@ class _ManageApartmentItemsScreenState
             tooltip: l10n.common_refresh,
             onPressed: () => setState(_loadItems),
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+          ),
+          IconButton(
+            tooltip: l10n.assets_scan_qr_short,
+            onPressed: _scanQrCode,
+            icon: const Icon(Icons.qr_code_scanner_rounded, color: Colors.white),
           ),
         ],
       ),
