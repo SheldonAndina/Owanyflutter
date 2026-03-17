@@ -70,6 +70,10 @@ dev_dependencies:
 # dependency_overrides:
 #  file_picker_windows: ^2.0.0
 
+## Removed win32 override to allow resolver to pick SDK-compatible versions
+# dependency_overrides:
+#  win32: ^6.0.0
+
 # ⚙️ CONFIGURAÇÃO DO ÍCONE
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"

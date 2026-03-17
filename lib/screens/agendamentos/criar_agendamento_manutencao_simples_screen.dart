@@ -569,7 +569,7 @@ class _CriarAgendamentoState extends State<CriarAgendamentoManutencaoSimplesScre
             const SizedBox(height: 20),
 
             DropdownButtonFormField<String?>(
-              value: _itemApartamentoSelecionadoId,
+              initialValue: _itemApartamentoSelecionadoId,
               items: [
                 const DropdownMenuItem<String?>(
                   value: null,
@@ -643,7 +643,7 @@ class _CriarAgendamentoState extends State<CriarAgendamentoManutencaoSimplesScre
     }
 
     return DropdownButtonFormField<String>(
-      value: _areaSelecionadoId,
+      initialValue: _areaSelecionadoId,
       isExpanded: true,
       items: available.map((a) => DropdownMenuItem(
         value: a.id,

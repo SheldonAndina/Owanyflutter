@@ -53,3 +53,12 @@ i18n_conversion.log
 .docs-index
 True/
 android/.kotlin/errors/
+**/android/app/google-services.json
+**/ios/Runner/GoogleService-Info.plist
+
+# Local Firebase C++ SDK and extracted build artifacts (do not commit)
+firebase-cpp-sdk/
+build/windows/x64/firebase_cpp_sdk_windows_*.zip
+build/windows/**/extracted/
+build/**/extracted/
+build/**/firebase_cpp_sdk_windows*/
